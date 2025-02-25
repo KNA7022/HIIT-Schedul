@@ -21,6 +21,10 @@ class _ScoresScreenState extends State<ScoresScreen> {
   bool _isLoading = true;
   String? _selectedTerm;
 
+  // 添加总体统计属性
+  double _totalGPA = 0.0;
+  double _totalCredits = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -47,10 +51,59 @@ class _ScoresScreenState extends State<ScoresScreen> {
           _terms = terms;
           _selectedTerm ??= terms.first;
         });
+        
+        // 加载所有学期成绩计算总GPA
+        await _loadAllTermsScores(terms);
+        
         _loadSelectedTermScores();
       }
     } catch (e) {
       print('加载学期列表失败: $e');
+    }
+  }
+
+  Future<void> _loadAllTermsScores(List<String> terms) async {
+    double totalPoints = 0.0;
+    int totalCourses = 0;
+    double totalCredits = 0.0;  // 添加总学分统计
+
+    for (var term in terms) {
+      try {
+        Map<String, dynamic>? scoreData = await _cacheService.getCachedTermScores(term);
+        
+        if (scoreData == null) {
+          final response = await _apiService.getTermScores(term, widget.userInfo.studentNumber);
+          if (response['code'] == 200) {
+            scoreData = response;
+            await _cacheService.cacheTermScores(term, response);
+          }
+        }
+
+        if (scoreData != null && 
+            scoreData['data'] != null && 
+            scoreData['data']['collect'] != null) {
+          final scores = (scoreData['data']['collect'] as List)
+              .map((item) => ScoreInfo.fromJson(item))
+              .toList();
+          
+          for (var score in scores) {
+            totalPoints += score.gpa;
+            totalCourses++;
+            totalCredits += score.creditValue;  // 累加每门课的学分
+          }
+        }
+      } catch (e) {
+        print('加载 $term 学期成绩失败: $e');
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _totalGPA = totalCourses > 0 
+            ? double.parse((totalPoints / totalCourses).toStringAsFixed(1))
+            : 0.0;
+        _totalCredits = double.parse(totalCredits.toStringAsFixed(1));  // 直接使用累加的总学分
+      });
     }
   }
 
@@ -104,13 +157,17 @@ class _ScoresScreenState extends State<ScoresScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadSelectedTermScores,
+            onPressed: () {
+              _loadSelectedTermScores();
+              _loadAllTermsScores(_terms); // 刷新总体统计
+            },
             tooltip: '刷新',
           ),
         ],
       ),
       body: Column(
         children: [
+          _buildOverallSummary(), // 添加总体统计卡片
           _buildTermSelector(),
           if (_selectedTerm != null && _termScores.containsKey(_selectedTerm!))
             _buildTermSummary(_termScores[_selectedTerm!]!),
@@ -120,6 +177,62 @@ class _ScoresScreenState extends State<ScoresScreen> {
                 : _buildScoresList(),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildOverallSummary() {
+    return Card(
+      margin: const EdgeInsets.all(16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '总体统计',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                Column(
+                  children: [
+                    Text(
+                      '总 GPA',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    Text(
+                      _totalGPA.toStringAsFixed(1),  // 修改为一位小数
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                Column(
+                  children: [
+                    Text(
+                      '总学分',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    Text(
+                      _totalCredits.toStringAsFixed(1),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -165,7 +278,7 @@ class _ScoresScreenState extends State<ScoresScreen> {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 Text(
-                  termScores.averageGPA.toStringAsFixed(2),
+                  termScores.averageGPA.toStringAsFixed(1),  // 修改为一位小数
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.bold,

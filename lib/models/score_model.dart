@@ -41,8 +41,11 @@ class ScoreInfo {
     return teacher.name;
   }
 
-  // 计算GPA
-  double get gpa => double.tryParse(point) ?? 0.0;
+  // 简单计算每门课的绩点，不需要乘以学分
+  double get gpa {
+    final value = double.tryParse(point) ?? 0.0;
+    return value;  // 返回原始绩点，不再在这里格式化
+  }
   
   // 获取学分数
   double get creditValue => double.tryParse(credit) ?? 0.0;
@@ -54,22 +57,24 @@ class TermScores {
   
   TermScores(this.term, this.scores);
 
-  // 计算学期GPA
+  // 修改 GPA 计算，确保按公式计算并四舍五入到一位小数
   double get averageGPA {
     if (scores.isEmpty) return 0.0;
     double totalPoints = 0.0;
-    double totalCredits = 0.0;
+    int totalCourses = scores.length;
     
     for (var score in scores) {
-      totalPoints += score.gpa * score.creditValue;
-      totalCredits += score.creditValue;
+      totalPoints += score.gpa;
     }
     
-    return totalCredits > 0 ? totalPoints / totalCredits : 0.0;
+    // GPA = (Σ单科绩点/Σ科目数)四舍五入保留一位小数
+    return double.parse((totalPoints / totalCourses).toStringAsFixed(1));
   }
 
-  // 获取总学分
+  // 获取总学分，保留一位小数
   double get totalCredits {
-    return scores.fold(0.0, (sum, score) => sum + score.creditValue);
+    final total = scores.fold(0.0, (sum, score) => sum + score.creditValue);
+    // 使用 double.parse(toStringAsFixed(1)) 确保保留一位小数
+    return double.parse(total.toStringAsFixed(1));
   }
 }
