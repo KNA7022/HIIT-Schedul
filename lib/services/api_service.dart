@@ -202,4 +202,18 @@ class ApiService {
       return {'code': 500, 'message': '获取课程详情失败: $e'};
     }
   }
+
+  Future<Map<String, dynamic>> getUserInfo() async {
+    try {
+      print('获取用户信息...');
+      print('当前请求头: ${_dio.options.headers}');
+      
+      final response = await _dio.get('/user/info');
+      print('用户信息响应: ${response.data}');
+      return response.data;
+    } catch (e) {
+      print('获取用户信息失败: $e');
+      return {'code': 500, 'message': '获取用户信息失败: $e'};
+    }
+  }
 }

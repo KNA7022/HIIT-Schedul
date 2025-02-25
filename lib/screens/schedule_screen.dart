@@ -6,6 +6,7 @@ import '../models/course_model.dart';
 import 'dart:math';
 import '../widgets/course_detail_dialog.dart';
 import '../services/cache_service.dart';
+import 'profile_screen.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
@@ -336,9 +337,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             onPressed: _loadWeekSchedule,
           ),
           IconButton(
-            icon: const Icon(Icons.info_outline),
-            tooltip: '关于',
-            onPressed: () => Navigator.pushNamed(context, '/about'),
+            icon: const Icon(Icons.person_outline),
+            tooltip: '个人信息',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ProfileScreen()),
+            ),
           ),
         ],
       ),
