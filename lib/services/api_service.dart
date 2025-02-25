@@ -157,6 +157,20 @@ class ApiService {
     print('After update: ${_dio.options.headers}');
   }
 
+  void reset() {
+    _sessionId = '';
+    _token = '';
+    
+    // 重置请求头，移除认证相关信息
+    final newHeaders = Map<String, dynamic>.from(_dio.options.headers);
+    newHeaders.remove('Cookie');
+    newHeaders.remove('Authorization');
+    _dio.options.headers = newHeaders;
+    
+    print('ApiService已重置');
+    print('当前请求头: ${_dio.options.headers}');
+  }
+
   Future<Map<String, dynamic>> getSemesterInfo() async {
     try {
       final response = await _dio.get('/pub/getCourseCalendar');
@@ -214,6 +228,40 @@ class ApiService {
     } catch (e) {
       print('获取用户信息失败: $e');
       return {'code': 500, 'message': '获取用户信息失败: $e'};
+    }
+  }
+
+  Future<List<String>> getTerms() async {
+    try {
+      print('获取学期列表...');
+      final response = await _dio.get('/score/getTerm');
+      print('学期列表响应: ${response.data}');
+      
+      if (response.data['code'] == 200) {
+        return List<String>.from(response.data['data']);
+      }
+      return [];
+    } catch (e) {
+      print('获取学期列表失败: $e');
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> getTermScores(String term, String studentNumber) async {
+    try {
+      print('获取 $term 学期成绩...');
+      final response = await _dio.get(
+        '/score/getScore',
+        queryParameters: {
+          'term': term,
+          'studentNumber': studentNumber,
+        },
+      );
+      print('成绩响应: ${response.data}');
+      return response.data;
+    } catch (e) {
+      print('获取成绩失败: $e');
+      return {'code': 500, 'message': '获取成绩失败: $e'};
     }
   }
 }

@@ -4,6 +4,7 @@ import '../services/api_service.dart';
 import '../services/storage_service.dart';
 import '../services/cache_service.dart';
 import 'about_screen.dart';
+import 'scores_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -66,9 +67,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _logout() async {
-    await StorageService().clearCredentials();
-    if (mounted) {
-      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+    try {
+      // 1. 重置 API 客户端
+      ApiService().reset();
+      
+      // 2. 清除所有缓存
+      await _cacheService.clearAllCache();
+      
+      // 3. 清除登录凭证
+      await StorageService().clearCredentials();
+      
+      if (mounted) {
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+      }
+    } catch (e) {
+      print('退出登录失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('退出登录失败: $e')),
+        );
+      }
     }
   }
 
@@ -180,6 +198,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       margin: const EdgeInsets.all(16),
       child: Column(
         children: [
+          ListTile(
+            leading: const Icon(Icons.school),
+            title: const Text('我的成绩'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _userInfo != null ? Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ScoresScreen(userInfo: _userInfo!),
+              ),
+            ) : null,
+          ),
+          const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('关于'),
