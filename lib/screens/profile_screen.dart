@@ -6,6 +6,7 @@ import '../services/cache_service.dart';
 import 'about_screen.dart';
 import 'scores_screen.dart';
 import 'rank_screen.dart';
+import '../screens/login_screen.dart';  // 添加登录页面的导入
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -68,6 +69,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  void _navigateToScreen(Widget screen) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => screen,
+        fullscreenDialog: false, // 添加全屏对话框效果
+      ),
+    );
+  }
+
   Future<void> _logout() async {
     setState(() => _isLoggingOut = true);  // 开始退出
     try {
@@ -81,7 +92,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await StorageService().clearCredentials();
       
       if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+        // 使用自定义路由动画
+        Navigator.pushAndRemoveUntil(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) => const LoginScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              const begin = Offset(1.0, 0.0);
+              const end = Offset.zero;
+              const curve = Curves.easeInOutCubic;
+              var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+              var offsetAnimation = animation.drive(tween);
+              return SlideTransition(position: offsetAnimation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 500),
+          ),
+          (route) => false,
+        );
       }
     } catch (e) {
       print('退出登录失败: $e');
@@ -209,32 +236,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
             leading: const Icon(Icons.school),
             title: const Text('我的成绩'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => _userInfo != null ? Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ScoresScreen(userInfo: _userInfo!),
-              ),
-            ) : null,
+            onTap: () => _userInfo != null 
+                ? _navigateToScreen(ScoresScreen(userInfo: _userInfo!))
+                : null,
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.leaderboard),
             title: const Text('班级排名'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const RankScreen()),
-            ),
+            onTap: () => _navigateToScreen(const RankScreen()),
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('关于'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const AboutScreen()),
-            ),
+            onTap: () => _navigateToScreen(const AboutScreen()),
           ),
           const Divider(height: 1),
           ListTile(

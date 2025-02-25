@@ -634,7 +634,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         children: weekdays.asMap().entries.map((entry) {
           final int index = entry.key;
           final String day = entry.value;
-          final bool isCurrentDay = index == _currentDay;
+          final bool isCurrentDay = (index == _currentDay) && (_currentDay > 0);
           String dateStr = '';
           if (index > 0 && _weekDates.isNotEmpty) {
             dateStr = '${_weekDates[index - 1].day}日';
