@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../models/rank_model.dart';  // 添加这行导入
 import 'storage_service.dart';
 
 class ApiService {
@@ -277,6 +278,23 @@ class ApiService {
     } catch (e) {
       print('获取成绩失败: $e');
       return {'code': 500, 'message': '获取成绩失败: $e'};
+    }
+  }
+
+  Future<List<RankInfo>> getRankList() async {
+    try {
+      print('获取班级排名...');
+      final response = await _dio.get('/score/getRank');
+      
+      if (response.data['code'] == 200 && response.data['data'] != null) {
+        return (response.data['data'] as List)
+            .map((item) => RankInfo.fromJson(item))
+            .toList();
+      }
+      return [];
+    } catch (e) {
+      print('获取班级排名失败: $e');
+      return [];
     }
   }
 }

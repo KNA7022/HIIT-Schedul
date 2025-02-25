@@ -5,6 +5,7 @@ import '../services/storage_service.dart';
 import '../services/cache_service.dart';
 import 'about_screen.dart';
 import 'scores_screen.dart';
+import 'rank_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -208,6 +209,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 builder: (context) => ScoresScreen(userInfo: _userInfo!),
               ),
             ) : null,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.leaderboard),
+            title: const Text('班级排名'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const RankScreen()),
+            ),
           ),
           const Divider(height: 1),
           ListTile(
