@@ -18,6 +18,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final CacheService _cacheService = CacheService();  // 添加这一行
   UserInfo? _userInfo;
   bool _isLoading = true;
+  bool _isLoggingOut = false;  // 添加退出登录状态
 
   @override
   void initState() {
@@ -68,6 +69,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _logout() async {
+    setState(() => _isLoggingOut = true);  // 开始退出
     try {
       // 1. 重置 API 客户端
       ApiService().reset();
@@ -87,6 +89,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('退出登录失败: $e')),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoggingOut = false);  // 结束退出
       }
     }
   }
@@ -236,13 +242,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Icons.logout,
               color: Theme.of(context).colorScheme.error,
             ),
-            title: Text(
-              '退出登录',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-              ),
+            title: Row(
+              children: [
+                Text(
+                  '退出登录',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+                if (_isLoggingOut) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
-            onTap: _logout,
+            enabled: !_isLoggingOut,  // 禁用正在退出时的按钮
+            onTap: _isLoggingOut ? null : _logout,  // 防止重复点击
           ),
         ],
       ),
