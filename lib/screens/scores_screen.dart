@@ -238,27 +238,48 @@ class _ScoresScreenState extends State<ScoresScreen> {
   }
 
   Widget _buildTermSelector() {
-    return Card(
-      margin: const EdgeInsets.all(16),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: DropdownButton<String>(
-          value: _selectedTerm,
-          isExpanded: true,
-          hint: const Text('选择学期'),
-          items: _terms.map((term) {
-            return DropdownMenuItem(
-              value: term,
-              child: Text(term),
-            );
-          }).toList(),
-          onChanged: (value) {
-            if (value != null && value != _selectedTerm) {
-              setState(() => _selectedTerm = value);
-              _loadSelectedTermScores();
-            }
-          },
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: DropdownButtonFormField<String>(
+        value: _selectedTerm,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: '选择学期',
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 16,
+          ),
+          filled: true,
+          fillColor: Theme.of(context).colorScheme.surface,
         ),
+        icon: Icon(
+          Icons.expand_more_rounded,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        elevation: 4,
+        dropdownColor: Theme.of(context).colorScheme.surface,
+        menuMaxHeight: MediaQuery.of(context).size.height * 0.5,
+        style: Theme.of(context).textTheme.bodyLarge,
+        items: _terms.map((term) {
+          return DropdownMenuItem(
+            value: term,
+            child: Text(
+              term,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          );
+        }).toList(),
+        onChanged: (value) {
+          if (value != null && value != _selectedTerm) {
+            setState(() => _selectedTerm = value);
+            _loadSelectedTermScores();
+          }
+        },
       ),
     );
   }
@@ -319,11 +340,39 @@ class _ScoresScreenState extends State<ScoresScreen> {
       itemCount: scores.length,
       itemBuilder: (context, index) {
         final score = scores[index];
+        final needsRetake = score.needsRetake;
+        
         return Card(
+          color: needsRetake 
+              ? Theme.of(context).colorScheme.errorContainer.withOpacity(0.5)
+              : null,
           child: ListTile(
-            title: Text(
-              score.courseName,
-              style: Theme.of(context).textTheme.titleMedium,
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    score.courseName,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                if (needsRetake)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.error,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '需补考',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onError,
+                      ),
+                    ),
+                  ),
+              ],
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -335,9 +384,17 @@ class _ScoresScreenState extends State<ScoresScreen> {
                   children: [
                     Text('平时: ${score.classEvaValue}'),
                     const SizedBox(width: 16),
-                    Text('期末: ${score.evaValue}'),
+                    Text('期末: ${score.finEvaValue}'),  //显示期末成绩
                     const SizedBox(width: 16),
-                    Text('最终: ${score.finEvaValue}'),
+                    Text(
+                      '最终: ${score.evaValue}',  // 显示最终成绩
+                      style: TextStyle(
+                        color: needsRetake 
+                            ? Theme.of(context).colorScheme.error 
+                            : null,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 4),

@@ -13,8 +13,8 @@ class ScoreInfo {
   final String courseName;
   final List<TeacherInfo> scoreSetters;
   final String classEvaValue; // 平时分
-  final String evaValue;     // 期末分
-  final String finEvaValue;  // 最终分
+  final String evaValue;     // 最终总评
+  final String finEvaValue;  // 期末成绩
   final String credit;       // 学分
   final String point;        // 绩点
   final String createBy;     // 创建者编号
@@ -49,6 +49,24 @@ class ScoreInfo {
   
   // 获取学分数
   double get creditValue => double.tryParse(credit) ?? 0.0;
+
+  // 修改判断逻辑，处理各种汉字成绩情况
+  bool get needsRetake {
+    // 处理文字成绩
+    switch (evaValue) {
+      case '优秀':
+      case '良好':
+      case '中等':
+      case '及格':
+        return false;
+      case '不及格':
+        return true;
+    }
+    
+    // 处理数字成绩
+    final score = double.tryParse(evaValue) ?? 0.0;
+    return score < 60;
+  }
 }
 
 class TermScores {
