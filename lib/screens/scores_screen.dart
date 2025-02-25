@@ -112,9 +112,12 @@ class _ScoresScreenState extends State<ScoresScreen> {
     
     setState(() => _isLoading = true);
     try {
+      print('开始加载 $_selectedTerm 学期成绩...');
+      
       // 先尝试从缓存加载成绩
       final cachedScores = await _cacheService.getCachedTermScores(_selectedTerm!);
       if (cachedScores != null) {
+        print('使用缓存的成绩数据');
         _processScores(_selectedTerm!, cachedScores);
       }
 
@@ -125,8 +128,16 @@ class _ScoresScreenState extends State<ScoresScreen> {
       );
       
       if (response['code'] == 200) {
+        print('成功获取新成绩数据');
         await _cacheService.cacheTermScores(_selectedTerm!, response);
         _processScores(_selectedTerm!, response);
+      }
+    } catch (e) {
+      print('加载成绩失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载失败: $e')),
+        );
       }
     } finally {
       if (mounted) {
@@ -137,11 +148,16 @@ class _ScoresScreenState extends State<ScoresScreen> {
 
   void _processScores(String term, Map<String, dynamic> data) {
     if (data['data'] == null || 
-        data['data']['collect'] == null) return;
+        data['data']['collect'] == null) {
+      print('成绩数据为空');
+      return;
+    }
 
     final scores = (data['data']['collect'] as List)
         .map((item) => ScoreInfo.fromJson(item))
         .toList();
+    
+    print('处理到 ${scores.length} 门课程成绩');
     
     setState(() {
       _termScores[term] = TermScores(term, scores);
@@ -240,46 +256,59 @@ class _ScoresScreenState extends State<ScoresScreen> {
   Widget _buildTermSelector() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: DropdownButtonFormField<String>(
-        value: _selectedTerm,
-        isExpanded: true,
-        decoration: InputDecoration(
-          labelText: '选择学期',
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 16,
-          ),
-          filled: true,
-          fillColor: Theme.of(context).colorScheme.surface,
-        ),
-        icon: Icon(
-          Icons.expand_more_rounded,
-          color: Theme.of(context).colorScheme.primary,
-        ),
-        elevation: 4,
-        dropdownColor: Theme.of(context).colorScheme.surface,
-        menuMaxHeight: MediaQuery.of(context).size.height * 0.5,
-        style: Theme.of(context).textTheme.bodyLarge,
-        items: _terms.map((term) {
-          return DropdownMenuItem(
-            value: term,
-            child: Text(
-              term,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface,
+      child: Container(
+        height: 56, // 固定高度
+        child: DropdownButtonFormField<String>(
+          value: _selectedTerm,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: '选择学期',
+            labelStyle: TextStyle(
+              fontSize: 14,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(
+                color: Theme.of(context).colorScheme.outline,
               ),
             ),
-          );
-        }).toList(),
-        onChanged: (value) {
-          if (value != null && value != _selectedTerm) {
-            setState(() => _selectedTerm = value);
-            _loadSelectedTermScores();
-          }
-        },
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 8,
+            ),
+            filled: true,
+            fillColor: Theme.of(context).colorScheme.surface,
+          ),
+          icon: Icon(
+            Icons.expand_more_rounded,
+            color: Theme.of(context).colorScheme.primary,
+            size: 24,
+          ),
+          dropdownColor: Theme.of(context).colorScheme.surface,
+          menuMaxHeight: 300, // 限制下拉菜单最大高度
+          style: Theme.of(context).textTheme.bodyMedium,
+          items: _terms.map((term) {
+            return DropdownMenuItem(
+              value: term,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  term,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+          onChanged: (value) {
+            if (value != null && value != _selectedTerm) {
+              setState(() => _selectedTerm = value);
+              _loadSelectedTermScores();
+            }
+          },
+        ),
       ),
     );
   }

@@ -249,7 +249,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> getTermScores(String term, String studentNumber) async {
     try {
-      print('获取 $term 学期成绩...');
+      print('正在获取 $term 学期成绩...');
       final response = await _dio.get(
         '/score/getScore',
         queryParameters: {
@@ -257,7 +257,22 @@ class ApiService {
           'studentNumber': studentNumber,
         },
       );
-      print('成绩响应: ${response.data}');
+      
+      // 使用更安全的日志打印方式
+      final responseData = response.data;
+      print('成绩响应状态码: ${responseData['code']}');
+      print('成绩数量: ${responseData['data']?['collect']?.length ?? 0}');
+      
+      if (responseData['code'] == 200 && 
+          responseData['data'] != null &&
+          responseData['data']['collect'] != null) {
+        // 打印每个成绩的课程名称进行验证
+        final courses = (responseData['data']['collect'] as List)
+            .map((item) => item['courseName'])
+            .toList();
+        print('获取到的课程: $courses');
+      }
+
       return response.data;
     } catch (e) {
       print('获取成绩失败: $e');
