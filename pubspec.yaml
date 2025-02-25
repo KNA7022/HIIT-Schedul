@@ -12,6 +12,7 @@ dependencies:
   dio: ^5.4.0
   intl: ^0.20.2
   shared_preferences: ^2.2.2  # 添加这一行
+  url_launcher: ^6.2.5  # 添加这一行
 
   cupertino_icons: ^1.0.6
 
