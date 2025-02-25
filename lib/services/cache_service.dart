@@ -6,6 +6,7 @@ class CacheService {
   static const String _prefixWeek = 'week_';
   static const String _prefixCourseDetail = 'course_';
   static const String _keyLastCleanup = 'last_cache_cleanup';
+  static const String _keyUserInfo = 'cached_user_info';
 
   // 缓存周数据
   Future<void> cacheWeekSchedule(int week, Map<String, dynamic> data) async {
@@ -80,6 +81,39 @@ class CacheService {
       return cachedData['data'] as Map<String, dynamic>;
     } catch (e) {
       await prefs.remove('$_prefixCourseDetail$timeAdd');
+      return null;
+    }
+  }
+
+  Future<void> cacheUserInfo(Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+    final cacheData = {
+      'data': data,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+    await prefs.setString(_keyUserInfo, jsonEncode(cacheData));
+    print('已缓存用户信息');
+  }
+
+  Future<Map<String, dynamic>?> getCachedUserInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString(_keyUserInfo);
+    
+    if (cached == null) return null;
+
+    try {
+      final cachedData = jsonDecode(cached) as Map<String, dynamic>;
+      final timestamp = DateTime.parse(cachedData['timestamp'] as String);
+      
+      if (DateTime.now().difference(timestamp) > _cacheValidity) {
+        await prefs.remove(_keyUserInfo);
+        return null;
+      }
+
+      return cachedData['data'] as Map<String, dynamic>;
+    } catch (e) {
+      print('解析用户信息缓存失败: $e');
+      await prefs.remove(_keyUserInfo);
       return null;
     }
   }

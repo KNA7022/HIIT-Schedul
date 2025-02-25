@@ -7,6 +7,7 @@ import 'dart:math';
 import '../widgets/course_detail_dialog.dart';
 import '../services/cache_service.dart';
 import 'profile_screen.dart';
+import '../models/user_info_model.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
@@ -28,6 +29,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   int _currentDay = DateTime.now().weekday; // 添加当前日期
   DateTime? _semesterStartDate;  // 添加学期开始日期
   List<DateTime> _weekDates = [];  // 添加当前周的日期列表
+  UserInfo? _userInfo;
   
   // 添加手势相关属性
   double _startDragX = 0;
@@ -49,6 +51,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeSchedule();
+      _loadUserInfo();  // 加载用户信息
     });
   }
 
@@ -90,6 +93,29 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         );
         Navigator.pushReplacementNamed(context, '/login');
       }
+    }
+  }
+
+  Future<void> _loadUserInfo() async {
+    try {
+      // 先尝试从缓存加载
+      final cachedData = await _cacheService.getCachedUserInfo();
+      if (cachedData != null) {
+        setState(() {
+          _userInfo = UserInfo.fromJson(cachedData);
+        });
+      }
+
+      // 从服务器获取最新数据
+      final response = await _apiService.getUserInfo();
+      if (response['code'] == 200 && response['data'] != null) {
+        await _cacheService.cacheUserInfo(response['data']);
+        setState(() {
+          _userInfo = UserInfo.fromJson(response['data']);
+        });
+      }
+    } catch (e) {
+      print('加载用户信息失败: $e');
     }
   }
 
@@ -318,7 +344,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               ),
             ),
             Text(
-              CourseInfo.currentTerm,
+              _userInfo != null 
+                ? '${CourseInfo.currentTerm} | ${_userInfo!.className}'
+                : CourseInfo.currentTerm,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onPrimaryContainer,
               ),

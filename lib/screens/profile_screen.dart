@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/user_info_model.dart';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
+import '../services/cache_service.dart';
 import 'about_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -12,6 +13,7 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final CacheService _cacheService = CacheService();  // 添加这一行
   UserInfo? _userInfo;
   bool _isLoading = true;
 
@@ -22,18 +24,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _loadUserInfo() async {
+    setState(() => _isLoading = true);
     try {
+      // 先尝试从缓存加载
+      final cachedData = await _cacheService.getCachedUserInfo();
+      if (cachedData != null) {
+        setState(() {
+          _userInfo = UserInfo.fromJson(cachedData);
+          _isLoading = false;
+        });
+      }
+
+      // 从服务器获取最新数据
       final response = await ApiService().getUserInfo();
       if (response['code'] == 200 && response['data'] != null) {
-        setState(() {
-          _userInfo = UserInfo.fromJson(response['data']);
-        });
-      } else {
+        await _cacheService.cacheUserInfo(response['data']);
         if (mounted) {
+          setState(() {
+            _userInfo = UserInfo.fromJson(response['data']);
+          });
+        }
+      } else {
+        if (mounted && cachedData == null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('获取个人信息失败: ${response['message']}')),
           );
         }
+      }
+    } catch (e) {
+      print('加载用户信息失败: $e');
+      if (mounted && _userInfo == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('加载失败: $e')),
+        );
       }
     } finally {
       if (mounted) {
@@ -55,6 +78,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         title: const Text('个人信息'),
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadUserInfo,
+            tooltip: '刷新',
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
