@@ -1,0 +1,35 @@
+name: haxinxi_schedule  # 修改应用名称
+description: "哈信息工程学院课程表第三方客户端"
+publish_to: 'none'
+version: 1.1.0+10  # 修改版本号
+
+environment:
+  sdk: '>=3.4.4 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.4.0
+  intl: ^0.20.2
+  shared_preferences: ^2.2.2  # 添加这一行
+
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1  # 添加这一行
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/icon/   # 添加图标目录
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  adaptive_icon_background: "#FFFFFF"  # 可选：设置自适应图标背景色
+  adaptive_icon_foreground: "assets/icon/icon.png"  # 可选：设置自适应图标前景
