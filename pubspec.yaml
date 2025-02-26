@@ -1,7 +1,7 @@
 name: haxinxi_schedule  # 修改应用名称
 description: "哈信息工程学院课程表第三方客户端"
 publish_to: 'none'
-version: 1.2.5+25  # 修改版本号
+version: 1.3.0+30  # 修改版本号
 
 environment:
   sdk: '>=3.4.4 <4.0.0'
