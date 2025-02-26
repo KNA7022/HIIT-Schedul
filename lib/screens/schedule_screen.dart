@@ -764,6 +764,47 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
   }
 
+  Widget _buildSyncIndicator() {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        margin: const EdgeInsets.only(right: 4, top: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary.withOpacity(0.9),
+          borderRadius: const BorderRadius.only(
+            topRight: Radius.circular(4),
+            bottomLeft: Radius.circular(8),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 10,
+              height: 10,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  Theme.of(context).colorScheme.onPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              _syncMessage,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
@@ -837,16 +878,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               if (_networkService.isOfflineMode)
                 _buildOfflineBanner(),
               Expanded(
-                child: _buildMainContent(),
+                child: Stack(  // 添加新的 Stack
+                  children: [
+                    _buildMainContent(),
+                    if (_isSyncing)
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: _buildSyncIndicator(),
+                      ),
+                  ],
+                ),
               ),
             ],
           ),
-          if (_isSyncing)
-            Positioned(
-              top: _networkService.isOfflineMode ? 40 : 0,
-              right: 0, // 改为右对齐
-              child: _buildSyncIndicator(),
-            ),
         ],
       ),
     );
@@ -877,51 +922,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSyncIndicator() {
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        margin: const EdgeInsets.only(top: 8, right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.9),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  Theme.of(context).colorScheme.primary,
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              _syncMessage,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onPrimaryContainer,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
