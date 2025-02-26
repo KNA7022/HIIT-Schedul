@@ -58,6 +58,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   bool _isSyncing = false;
   String _syncMessage = '';
 
+  // 添加新的加载状态
+  final _isLoadingWeekNotifier = ValueNotifier<bool>(false);
+
   @override
   void initState() {
     super.initState();
@@ -203,6 +206,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     _networkService.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
+    _isLoadingWeekNotifier.dispose();
     super.dispose();
   }
 
@@ -614,13 +618,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     if (newWeek == _currentWeek || _isAnimating) return;
     
     _isAnimating = true;
+    _isLoadingWeekNotifier.value = true;  // 开始加载
     final previousWeek = _currentWeek;
     
     try {
-      // 1. 预加载新周数据
+      // 1. 立即更新UI到目标周
+      _currentWeek = newWeek;
+      _updateWeekDates();
+
+      // 2. 先尝试执行页面切换动画
+      _pageController.animateToPage(
+        newWeek - 1,
+        duration: _animationDuration,
+        curve: _animationCurve,
+      );
+
+      // 3. 异步加载数据
       List<List<CourseInfo?>>? nextWeekData = _preloadedData[newWeek];
       
       if (nextWeekData == null) {
+        // 先显示空课表
+        _weekCourses = List.generate(7, (_) => List.filled(5, null));
+        
         // 尝试从缓存加载
         final cachedData = await _cacheService.getCachedWeekSchedule(newWeek);
         if (cachedData != null && cachedData['week'] == newWeek) {
@@ -636,51 +655,32 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             nextWeekData = await _processCourseData(newData);
           }
         }
-        
-        // 如果仍然没有数据，使用空课表
-        nextWeekData ??= List.generate(7, (_) => List.filled(5, null));
       }
-
-      // 2. 开始切换动画
-      setState(() {
-        _currentWeek = newWeek;
-        _updateWeekDates();
-      });
-
-      // 3. 执行页面切换动画
-      await _pageController.animateToPage(
-        newWeek - 1,
-        duration: _animationDuration,
-        curve: _animationCurve,
-      );
 
       // 4. 应用新数据
-      if (mounted) {
-        setState(() {
-          _weekCourses = nextWeekData!;
-          _courseCache[newWeek] = nextWeekData;
-        });
+      if (mounted && nextWeekData != null) {
+        _weekCourses = nextWeekData;
+        _courseCache[newWeek] = nextWeekData;
       }
 
-      // 5. 清理并开始预加载相邻周
+      // 5. 预加载相邻周
       _preloadedData.clear();
       _preloadAdjacentWeeks(newWeek);
-
-      // 6. 如果是在线模式，自动更新当前周数据
-      if (!_networkService.isOfflineMode) {
-        _updateCurrentWeekData();
-      }
 
     } catch (e) {
       print('切换周次失败: $e');
       if (mounted) {
-        setState(() {
-          _currentWeek = previousWeek;
-          _updateWeekDates();
-        });
+        _currentWeek = previousWeek;
+        _updateWeekDates();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('切换周次失败: $e')),
+        );
       }
     } finally {
-      _isAnimating = false;
+      if (mounted) {
+        _isAnimating = false;
+        _isLoadingWeekNotifier.value = false;
+      }
     }
   }
 
@@ -927,65 +927,82 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   Widget _buildMainContent() {
-    return GestureDetector(
-      onHorizontalDragStart: (details) {
-        if (!_isAnimating) {
-          _startDragX = details.localPosition.dx;
-          _isDragging = true;
-        }
-      },
-      onHorizontalDragUpdate: (details) {
-        if (!_isDragging || _isAnimating) return;
-        final delta = details.localPosition.dx - _startDragX;
-        
-        if (delta.abs() > MediaQuery.of(context).size.width * 0.2) {
-          _isDragging = false;
-          if (delta > 0 && _currentWeek > 1) {
-            _changeWeek(_currentWeek - 1);
-          } else if (delta < 0 && _currentWeek < _totalWeeks) {
-            _changeWeek(_currentWeek + 1);
-          }
-        }
-      },
-      onHorizontalDragEnd: (details) => _isDragging = false,
-      child: PageView.builder(
-        controller: _pageController,
-        physics: _isAnimating 
-            ? const NeverScrollableScrollPhysics() 
-            : const BouncingScrollPhysics(),
-        onPageChanged: (index) {
-          if (!_isAnimating) {
-            _changeWeek(index + 1);
-          }
-        },
-        itemCount: _totalWeeks,
-        itemBuilder: (context, index) {
-          // 优化动画计算
-          final double position = (index - _currentPageValue).clamp(-1.0, 1.0);
-          final double opacity = (1 - position.abs()).clamp(0.3, 1.0);
-          
-          return RepaintBoundary(
-            child: AnimatedBuilder(
-              animation: _pageController,
-              builder: (context, child) {
-                return Transform(
-                  transform: Matrix4.identity()
-                    ..setEntry(3, 2, 0.001)
-                    ..rotateY(position * 0.2), // 减小旋转角度
-                  alignment: position <= 0 
-                      ? Alignment.centerRight 
-                      : Alignment.centerLeft,
-                  child: Opacity(
-                    opacity: opacity,
-                    child: child,
-                  ),
-                );
-              },
-              child: _buildTimeTableLayout(MediaQuery.of(context).size),
-            ),
-          );
-        },
-      ),
+    return Stack(
+      children: [
+        GestureDetector(
+          onHorizontalDragStart: (details) {
+            if (!_isAnimating) {
+              _startDragX = details.localPosition.dx;
+              _isDragging = true;
+            }
+          },
+          onHorizontalDragUpdate: (details) {
+            if (!_isDragging || _isAnimating) return;
+            final delta = details.localPosition.dx - _startDragX;
+            
+            if (delta.abs() > MediaQuery.of(context).size.width * 0.2) {
+              _isDragging = false;
+              if (delta > 0 && _currentWeek > 1) {
+                _changeWeek(_currentWeek - 1);
+              } else if (delta < 0 && _currentWeek < _totalWeeks) {
+                _changeWeek(_currentWeek + 1);
+              }
+            }
+          },
+          onHorizontalDragEnd: (details) => _isDragging = false,
+          child: PageView.builder(
+            controller: _pageController,
+            physics: _isAnimating 
+                ? const NeverScrollableScrollPhysics() 
+                : const BouncingScrollPhysics(),
+            onPageChanged: (index) {
+              if (!_isAnimating) {
+                _changeWeek(index + 1);
+              }
+            },
+            itemCount: _totalWeeks,
+            itemBuilder: (context, index) {
+              // 优化动画计算
+              final double position = (index - _currentPageValue).clamp(-1.0, 1.0);
+              final double opacity = (1 - position.abs()).clamp(0.3, 1.0);
+              
+              return RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: _pageController,
+                  builder: (context, child) {
+                    return Transform(
+                      transform: Matrix4.identity()
+                        ..setEntry(3, 2, 0.001)
+                        ..rotateY(position * 0.2), // 减小旋转角度
+                      alignment: position <= 0 
+                          ? Alignment.centerRight 
+                          : Alignment.centerLeft,
+                      child: Opacity(
+                        opacity: opacity,
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: _buildTimeTableLayout(MediaQuery.of(context).size),
+                ),
+              );
+            },
+          ),
+        ),
+        // 添加加载指示器
+        ValueListenableBuilder<bool>(
+          valueListenable: _isLoadingWeekNotifier,
+          builder: (context, isLoading, child) {
+            if (!isLoading) return const SizedBox.shrink();
+            return Container(
+              color: Theme.of(context).colorScheme.surface.withOpacity(0.7),
+              child: const Center(
+                child: CircularProgressIndicator(),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 
