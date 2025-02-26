@@ -44,9 +44,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   Map<int, List<List<CourseInfo?>>> _courseCache = {};
 
   // 添加周切换动画属性
-  late PageController _pageController;
+  late final PageController _pageController;
   double _currentPageValue = 0.0;
   bool _isAnimating = false;
+  final Duration _animationDuration = const Duration(milliseconds: 250);
+  final Curve _animationCurve = Curves.easeInOutCubic;
+
+  // 添加预加载数据缓存
+  Map<int, List<List<CourseInfo?>>> _preloadedData = {};
 
   @override
   void initState() {
@@ -75,15 +80,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     _pageController = PageController(
       initialPage: _currentWeek - 1,
       viewportFraction: 1.0,
-    );
-    
-    _pageController.addListener(() {
-      if (mounted) {
-        setState(() {
-          _currentPageValue = _pageController.page ?? 0;
-        });
-      }
+    )..addListener(_handlePageScroll);
+
+    // 初始化后立即开始预加载
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _preloadAdjacentWeeks(_currentWeek);
     });
+  }
+
+  void _handlePageScroll() {
+    if (mounted) {
+      setState(() {
+        _currentPageValue = _pageController.page ?? 0;
+      });
+    }
   }
 
   @override
@@ -529,24 +539,72 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     if (newWeek == _currentWeek || _isAnimating) return;
     
     _isAnimating = true;
-    setState(() {
-      _currentWeek = newWeek;
-      _updateWeekDates();
-    });
+    final previousWeek = _currentWeek;
+    
+    try {
+      // 1. 预加载新周数据
+      List<List<CourseInfo?>>? nextWeekData = _preloadedData[newWeek];
+      
+      if (nextWeekData == null) {
+        // 尝试从缓存加载
+        final cachedData = await _cacheService.getCachedWeekSchedule(newWeek);
+        if (cachedData != null && cachedData['week'] == newWeek) {
+          nextWeekData = await _processCourseData(cachedData);
+        }
+        
+        // 如果没有缓存数据且在线，从服务器获取
+        if (nextWeekData == null && !_networkService.isOfflineMode) {
+          final newData = await _apiService.getWeekSchedule(newWeek);
+          if (newData['code'] == 200) {
+            newData['week'] = newWeek;
+            await _cacheService.cacheWeekSchedule(newWeek, newData);
+            nextWeekData = await _processCourseData(newData);
+          }
+        }
+        
+        // 如果仍然没有数据，使用空课表
+        nextWeekData ??= List.generate(7, (_) => List.filled(5, null));
+      }
 
-    // 使用 PageController 执行动画切换
-    await _pageController.animateToPage(
-      newWeek - 1,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+      // 2. 开始切换动画
+      setState(() {
+        _currentWeek = newWeek;
+        _updateWeekDates();
+      });
 
-    // 加载新周次的数据
-    await _loadWeekSchedule();
-    _isAnimating = false;
+      // 3. 执行页面切换动画
+      await _pageController.animateToPage(
+        newWeek - 1,
+        duration: _animationDuration,
+        curve: _animationCurve,
+      );
+
+      // 4. 应用新数据
+      if (mounted) {
+        setState(() {
+          _weekCourses = nextWeekData!;
+          _courseCache[newWeek] = nextWeekData;
+        });
+      }
+
+      // 5. 清理并开始预加载相邻周
+      _preloadedData.clear();
+      _preloadAdjacentWeeks(newWeek);
+
+    } catch (e) {
+      print('切换周次失败: $e');
+      if (mounted) {
+        setState(() {
+          _currentWeek = previousWeek;
+          _updateWeekDates();
+        });
+      }
+    } finally {
+      _isAnimating = false;
+    }
   }
 
-  // 添加预加载方法
+  // 修改预加载方法
   Future<void> _preloadAdjacentWeeks(int currentWeek) async {
     final List<int> weeksToPreload = [
       if (currentWeek > 1) currentWeek - 1,
@@ -554,16 +612,33 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     ];
 
     for (final week in weeksToPreload) {
-      if (!_courseCache.containsKey(week)) {
-        try {
-          final cachedData = await _cacheService.getCachedWeekSchedule(week);
-          if (cachedData != null) {
-            final processedData = await _processCourseData(cachedData);
-            _courseCache[week] = processedData;
-          }
-        } catch (e) {
-          print('预加载第 $week 周数据失败: $e');
+      try {
+        // 如果已经有缓存数据，跳过
+        if (_courseCache.containsKey(week)) {
+          _preloadedData[week] = _courseCache[week]!;
+          continue;
         }
+
+        // 尝试从本地缓存加载
+        final cachedData = await _cacheService.getCachedWeekSchedule(week);
+        if (cachedData != null && cachedData['week'] == week) {
+          final processedData = await _processCourseData(cachedData);
+          _preloadedData[week] = processedData;
+          continue;
+        }
+
+        // 在线模式下从服务器获取
+        if (!_networkService.isOfflineMode) {
+          final newData = await _apiService.getWeekSchedule(week);
+          if (newData['code'] == 200) {
+            newData['week'] = week;
+            await _cacheService.cacheWeekSchedule(week, newData);
+            final processedData = await _processCourseData(newData);
+            _preloadedData[week] = processedData;
+          }
+        }
+      } catch (e) {
+        print('预加载第 $week 周数据失败: $e');
       }
     }
   }
@@ -633,21 +708,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ),
           ),
         ],
-        bottom: _networkService.isOfflineMode ? PreferredSize(
-          preferredSize: const Size.fromHeight(30),
-          child: Container(
-            width: double.infinity,
-            color: Theme.of(context).colorScheme.errorContainer,
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Text(
-              '离线模式',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onErrorContainer,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ) : null,
       ),
       body: Column(
         children: [
@@ -702,7 +762,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               onHorizontalDragEnd: (details) => _isDragging = false,
               child: PageView.builder(
                 controller: _pageController,
-                physics: _isAnimating ? const NeverScrollableScrollPhysics() : null,
+                physics: _isAnimating 
+                    ? const NeverScrollableScrollPhysics() 
+                    : const BouncingScrollPhysics(),
                 onPageChanged: (index) {
                   if (!_isAnimating) {
                     _changeWeek(index + 1);
@@ -710,17 +772,27 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                 },
                 itemCount: _totalWeeks,
                 itemBuilder: (context, index) {
-                  // 计算每个页面的动画值
-                  final double position = index - _currentPageValue;
-                  final bool isCurrentPage = position.abs() < 0.5;
-
-                  return Transform(
-                    transform: Matrix4.identity()
-                      ..setEntry(3, 2, 0.001) // 添加透视效果
-                      ..rotateY(position * 0.3), // 添加3D旋转效果
-                    alignment: position < 0 ? Alignment.centerRight : Alignment.centerLeft,
-                    child: Opacity(
-                      opacity: 1.0 - position.abs() * 0.5,
+                  // 优化动画计算
+                  final double position = (index - _currentPageValue).clamp(-1.0, 1.0);
+                  final double opacity = (1 - position.abs()).clamp(0.3, 1.0);
+                  
+                  return RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _pageController,
+                      builder: (context, child) {
+                        return Transform(
+                          transform: Matrix4.identity()
+                            ..setEntry(3, 2, 0.001)
+                            ..rotateY(position * 0.2), // 减小旋转角度
+                          alignment: position <= 0 
+                              ? Alignment.centerRight 
+                              : Alignment.centerLeft,
+                          child: Opacity(
+                            opacity: opacity,
+                            child: child,
+                          ),
+                        );
+                      },
                       child: _buildTimeTableLayout(MediaQuery.of(context).size),
                     ),
                   );
