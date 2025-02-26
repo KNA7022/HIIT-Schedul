@@ -60,7 +60,7 @@ class AboutScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            '哈信息-我的课程表 v1.3.0',  // 更新版本号
+            '哈信息-我的课程表 v1.3.5',  // 更新版本号
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 24),

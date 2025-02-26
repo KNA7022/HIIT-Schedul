@@ -78,9 +78,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     // 立即检查网络状态
     _networkService.checkConnectivity();
     
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializeSchedule();
-      _loadUserInfo();  // 加载用户信息
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _initializeSchedule();  // 等待初始化完成
+      if (mounted) {
+        await _loadWeekSchedule();  // 确保加载完成
+        _pageController.addListener(_handlePageScroll);
+        _preloadAdjacentWeeks(_currentWeek);
+      }
     });
     _initializeNetworkMonitoring();
     WidgetsBinding.instance.addObserver(this);
@@ -680,6 +684,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       if (mounted) {
         _isAnimating = false;
         _isLoadingWeekNotifier.value = false;
+        _updateWeekDates();
       }
     }
   }
