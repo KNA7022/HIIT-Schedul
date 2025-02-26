@@ -43,6 +43,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   // 添加预加载缓存
   Map<int, List<List<CourseInfo?>>> _courseCache = {};
 
+  // 添加周切换动画属性
+  late PageController _pageController;
+  double _currentPageValue = 0.0;
+  bool _isAnimating = false;
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +71,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     });
     _initializeNetworkMonitoring();
     WidgetsBinding.instance.addObserver(this);
+
+    _pageController = PageController(
+      initialPage: _currentWeek - 1,
+      viewportFraction: 1.0,
+    );
+    
+    _pageController.addListener(() {
+      if (mounted) {
+        setState(() {
+          _currentPageValue = _pageController.page ?? 0;
+        });
+      }
+    });
   }
 
   @override
@@ -122,6 +140,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     _courseCache.clear();
     _networkService.dispose();
     WidgetsBinding.instance.removeObserver(this);
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -506,18 +525,25 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   // 在周次改变时更新日期
-  void _changeWeek(int newWeek) {
-    if (newWeek == _currentWeek) return;
-
+  Future<void> _changeWeek(int newWeek) async {
+    if (newWeek == _currentWeek || _isAnimating) return;
+    
+    _isAnimating = true;
     setState(() {
       _currentWeek = newWeek;
       _updateWeekDates();
-      // 移除立即显示缓存数据的逻辑
-      _weekCourses = List.generate(7, (_) => List.filled(5, null));
     });
 
-    // 立即加载新周次的数据
-    _loadWeekSchedule();
+    // 使用 PageController 执行动画切换
+    await _pageController.animateToPage(
+      newWeek - 1,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+
+    // 加载新周次的数据
+    await _loadWeekSchedule();
+    _isAnimating = false;
   }
 
   // 添加预加载方法
@@ -655,67 +681,50 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           Expanded(
             child: GestureDetector(
               onHorizontalDragStart: (details) {
-                _startDragX = details.localPosition.dx;
-                _isDragging = true;
+                if (!_isAnimating) {
+                  _startDragX = details.localPosition.dx;
+                  _isDragging = true;
+                }
               },
               onHorizontalDragUpdate: (details) {
-                if (!_isDragging) return;
+                if (!_isDragging || _isAnimating) return;
                 final delta = details.localPosition.dx - _startDragX;
                 
-                // 当拖动超过屏幕宽度的20%时切换周次
-                if (delta.abs() > screenSize.width * 0.2) {
+                if (delta.abs() > MediaQuery.of(context).size.width * 0.2) {
                   _isDragging = false;
                   if (delta > 0 && _currentWeek > 1) {
-                    // 向右滑动，上一周
                     _changeWeek(_currentWeek - 1);
                   } else if (delta < 0 && _currentWeek < _totalWeeks) {
-                    // 向左滑动，下一周
                     _changeWeek(_currentWeek + 1);
                   }
                 }
               },
-              onHorizontalDragEnd: (details) {
-                _isDragging = false;
-              },
-              child: Stack(
-                children: [
-                  FadeTransition(
-                    opacity: _animation,
-                    child: _buildTimeTableLayout(screenSize),
-                  ),
-                  if (_isLoadingBackground)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surface.withOpacity(0.8),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '同步中',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
+              onHorizontalDragEnd: (details) => _isDragging = false,
+              child: PageView.builder(
+                controller: _pageController,
+                physics: _isAnimating ? const NeverScrollableScrollPhysics() : null,
+                onPageChanged: (index) {
+                  if (!_isAnimating) {
+                    _changeWeek(index + 1);
+                  }
+                },
+                itemCount: _totalWeeks,
+                itemBuilder: (context, index) {
+                  // 计算每个页面的动画值
+                  final double position = index - _currentPageValue;
+                  final bool isCurrentPage = position.abs() < 0.5;
+
+                  return Transform(
+                    transform: Matrix4.identity()
+                      ..setEntry(3, 2, 0.001) // 添加透视效果
+                      ..rotateY(position * 0.3), // 添加3D旋转效果
+                    alignment: position < 0 ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Opacity(
+                      opacity: 1.0 - position.abs() * 0.5,
+                      child: _buildTimeTableLayout(MediaQuery.of(context).size),
                     ),
-                ],
+                  );
+                },
               ),
             ),
           ),
