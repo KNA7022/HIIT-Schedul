@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../models/rank_model.dart';
 import '../services/api_service.dart';
+import '../services/network_service.dart';
+import '../services/cache_service.dart';
 
 class RankScreen extends StatefulWidget {
   const RankScreen({super.key});
@@ -13,6 +15,9 @@ class _RankScreenState extends State<RankScreen> {
   List<RankInfo> _rankList = [];
   bool _isLoading = true;
   String _className = '';
+  final ApiService _apiService = ApiService();
+  final CacheService _cacheService = CacheService();
+  final NetworkService _networkService = NetworkService();
 
   @override
   void initState() {
@@ -22,22 +27,40 @@ class _RankScreenState extends State<RankScreen> {
 
   Future<void> _loadRankList() async {
     setState(() => _isLoading = true);
+
     try {
-      final rankList = await ApiService().getRankList();
-      setState(() {
-        _rankList = rankList;
-        if (rankList.isNotEmpty) {
-          _className = rankList.first.className;
+      // 先尝试从缓存加载
+      final cachedRanks = await _cacheService.getCachedRankList();
+      if (cachedRanks != null) {
+        setState(() {
+          _rankList = List<RankInfo>.from(cachedRanks.map((r) => RankInfo.fromJson(r)));
+          _processRankData();
+        });
+      }
+
+      // 如果不是离线模式，则从服务器获取最新数据
+      if (!_networkService.isOfflineMode) {
+        final ranks = await _apiService.getRankList();
+        if (ranks.isNotEmpty) {
+          await _cacheService.cacheRankList(ranks);
+          if (mounted) {
+            setState(() {
+              _rankList = ranks;
+              _processRankData();
+            });
+          }
         }
-        _isLoading = false;
-      });
+      }
     } catch (e) {
       print('加载排名失败: $e');
-      setState(() => _isLoading = false);
-      if (mounted) {
+      if (mounted && _rankList.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('加载失败: $e')),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -133,6 +156,19 @@ class _RankScreenState extends State<RankScreen> {
         return Colors.brown.shade300;
       default:
         return Theme.of(context).colorScheme.surfaceVariant;
+    }
+  }
+
+  void _processRankData() {
+    if (_rankList.isNotEmpty) {
+      // 找到自己的数据来获取班级名称
+      final selfData = _rankList.firstWhere(
+        (rank) => rank.isSelf,
+        orElse: () => _rankList.first,
+      );
+      setState(() {
+        _className = selfData.className;
+      });
     }
   }
 }

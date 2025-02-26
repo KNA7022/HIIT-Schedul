@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/rank_model.dart';  // 添加这行导入
 import 'storage_service.dart';
+import 'network_service.dart';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
@@ -12,6 +13,7 @@ class ApiService {
   late final Dio _dio;
   String _sessionId = '';
   String _token = '';
+  final NetworkService _networkService = NetworkService();
   
   ApiService._internal() {
     _dio = Dio(BaseOptions(
@@ -116,31 +118,32 @@ class ApiService {
       if (credentials['sessionId'] != null && credentials['token'] != null) {
         _sessionId = credentials['sessionId']!;
         _token = credentials['token']!;
-        
-        // 更新请求头
         _updateHeaders();
         
+        // 检查网络连接
+        final isConnected = await _networkService.checkConnectivity();
+        if (!isConnected) {
+          print('网络不可用，启用离线模式');
+          _networkService.setOfflineMode(true);
+          return true; // 有缓存凭证时允许离线访问
+        }
+        
         // 验证凭证
-        print('Testing stored credentials...');
-        print('Headers before test: ${_dio.options.headers}');
-        
         final response = await _dio.get('/pub/getCourseCalendar');
-        print('Test response with stored credentials: ${response.data}');
-        
         if (response.data['code'] == 200) {
+          _networkService.setOfflineMode(false);
           return true;
         }
         
-        // 尝试重新登录
         if (credentials['username'] != null && credentials['password'] != null) {
-          print('Trying to re-login with stored credentials...');
           return login(credentials['username']!, credentials['password']!);
         }
       }
       return false;
     } catch (e) {
       print('Initialize from storage error: $e');
-      return false;
+      _networkService.setOfflineMode(true);
+      return true; // 有缓存凭证时允许离线访问
     }
   }
 
@@ -182,23 +185,24 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> getWeekSchedule(int week) async {
-    try {
-      print('获取第 $week 周课表');
-      print('当前请求头: ${_dio.options.headers}');
-      
-      final response = await _dio.get(
-        '/timetable/getDataWeek',
-        queryParameters: {'week': week.toString()},
-        options: Options(validateStatus: (status) => status != null && status < 500),
-      );
-      
-      print('课表响应: ${response.data}');
-      return response.data;
-    } catch (e) {
-      print('获取周课表失败: $e');
-      return {'code': 500, 'message': '获取周课表失败: $e'};
+  Future<Map<String, dynamic>> _safeApiCall(Future<Response> Function() apiCall) async {
+    if (_networkService.isOfflineMode) {
+      return {'code': 200, 'message': '离线模式', 'data': null};
     }
+    try {
+      final response = await apiCall();
+      return response.data as Map<String, dynamic>;
+    } catch (e) {
+      print('API 调用失败: $e');
+      return {'code': 500, 'message': e.toString(), 'data': null};
+    }
+  }
+
+  Future<Map<String, dynamic>> getWeekSchedule(int week) async {
+    return _safeApiCall(() => _dio.get(
+      '/timetable/getDataWeek',
+      queryParameters: {'week': week.toString()},
+    ));
   }
 
   Future<Map<String, dynamic>> getClassInfo(String timeAdd) async {

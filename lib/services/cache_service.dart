@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/rank_model.dart';  // 添加这行导入
 
 class CacheService {
   static const Duration _cacheValidity = Duration(hours: 24);
@@ -9,6 +10,7 @@ class CacheService {
   static const String _keyUserInfo = 'cached_user_info';
   static const String _prefixTermScores = 'term_scores_';
   static const String _keyTermList = 'term_list';
+  static const String _keyRankList = 'rank_list';  // 添加排名缓存的键名
 
   // 缓存周数据
   Future<void> cacheWeekSchedule(int week, Map<String, dynamic> data) async {
@@ -231,20 +233,72 @@ class CacheService {
   }
 
   Future<void> clearAllCache() async {
-    final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys();
-    
-    // 清除所有缓存数据
-    for (var key in keys) {
-      if (key.startsWith(_prefixWeek) || 
-          key.startsWith(_prefixCourseDetail) ||
-          key.startsWith(_prefixTermScores) ||
-          key == _keyUserInfo ||
-          key == _keyTermList ||
-          key == _keyLastCleanup) {
-        await prefs.remove(key);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // 获取所有键
+      final keys = prefs.getKeys();
+      print('开始清理缓存，找到 ${keys.length} 个缓存项');
+
+      // 需要清理的前缀和键名列表
+      final prefixesToClear = [_prefixWeek, _prefixCourseDetail, _prefixTermScores];
+      final keysToRemove = [
+        _keyLastCleanup,
+        _keyUserInfo,
+        _keyTermList,
+        _keyRankList,
+      ];
+
+      // 按前缀清理
+      for (var prefix in prefixesToClear) {
+        final matchingKeys = keys.where((key) => key.startsWith(prefix)).toList();
+        print('清理 $prefix 相关缓存: ${matchingKeys.length} 项');
+        for (var key in matchingKeys) {
+          await prefs.remove(key);
+        }
       }
+
+      // 清理特定键
+      for (var key in keysToRemove) {
+        if (prefs.containsKey(key)) {
+          await prefs.remove(key);
+          print('清理缓存: $key');
+        }
+      }
+
+      print('缓存清理完成');
+    } catch (e) {
+      print('清理缓存时出错: $e');
+      rethrow;
     }
-    print('已清除所有缓存数据');
+  }
+
+  // 添加排名缓存相关方法
+  Future<List<Map<String, dynamic>>?> getCachedRankList() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString('rank_list');
+    if (jsonString != null) {
+      return List<Map<String, dynamic>>.from(
+        jsonDecode(jsonString).map((x) => Map<String, dynamic>.from(x))
+      );
+    }
+    return null;
+  }
+
+  Future<void> cacheRankList(List<RankInfo> rankList) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = jsonEncode(
+      rankList.map((r) => {
+        'average': r.average,
+        'studentNumber': r.studentNumber,
+        'studentName': r.studentName,
+        'self': r.isSelf ? '1' : '0',
+        'rank': r.rank,
+        'credit': r.credit,
+        'className': r.className,
+        'classId': r.classId,
+      }).toList()
+    );
+    await prefs.setString('rank_list', jsonString);
   }
 }

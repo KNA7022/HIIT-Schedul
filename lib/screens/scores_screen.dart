@@ -3,6 +3,7 @@ import '../models/score_model.dart';
 import '../models/user_info_model.dart';
 import '../services/api_service.dart';
 import '../services/cache_service.dart';
+import '../services/network_service.dart';
 
 class ScoresScreen extends StatefulWidget {
   final UserInfo userInfo;
@@ -16,9 +17,11 @@ class ScoresScreen extends StatefulWidget {
 class _ScoresScreenState extends State<ScoresScreen> {
   final ApiService _apiService = ApiService();
   final CacheService _cacheService = CacheService();
+  final NetworkService _networkService = NetworkService();
   List<String> _terms = [];
   Map<String, TermScores> _termScores = {};
   bool _isLoading = true;
+  bool _isLoadingScores = false;
   String? _selectedTerm;
 
   // 添加总体统计属性
@@ -146,6 +149,41 @@ class _ScoresScreenState extends State<ScoresScreen> {
     }
   }
 
+  Future<void> _loadTermScores(String term) async {
+    if (_isLoadingScores) return;
+    setState(() => _isLoadingScores = true);
+
+    try {
+      // 先尝试从缓存加载
+      final cachedData = await _cacheService.getCachedTermScores(term);
+      if (cachedData != null) {
+        setState(() {
+          _processScoreData(cachedData, term);
+          _isLoadingScores = false;
+        });
+      }
+
+      // 如果不是离线模式，则从服务器获取最新数据
+      if (!_networkService.isOfflineMode) {
+        final response = await _apiService.getTermScores(term, widget.userInfo.studentNumber);
+        if (response['code'] == 200) {
+          await _cacheService.cacheTermScores(term, response);
+          if (mounted) {
+            setState(() {
+              _processScoreData(response, term);
+            });
+          }
+        }
+      }
+    } catch (e) {
+      print('加载成绩失败: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingScores = false);
+      }
+    }
+  }
+
   void _processScores(String term, Map<String, dynamic> data) {
     if (data['data'] == null || 
         data['data']['collect'] == null) {
@@ -162,6 +200,14 @@ class _ScoresScreenState extends State<ScoresScreen> {
     setState(() {
       _termScores[term] = TermScores(term, scores);
     });
+  }
+
+  void _processScoreData(Map<String, dynamic> response, String term) {
+    if (response['data'] != null && response['data']['collect'] != null) {
+      final List<dynamic> collect = response['data']['collect'];
+      final scores = collect.map((item) => ScoreInfo.fromJson(item)).toList();
+      _termScores[term] = TermScores(term, scores);
+    }
   }
 
   @override

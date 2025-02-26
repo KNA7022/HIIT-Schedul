@@ -8,6 +8,7 @@ import '../widgets/course_detail_dialog.dart';
 import '../services/cache_service.dart';
 import 'profile_screen.dart';
 import '../models/user_info_model.dart';
+import '../services/network_service.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
@@ -19,6 +20,7 @@ class ScheduleScreen extends StatefulWidget {
 class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
   final CacheService _cacheService = CacheService();
+  final NetworkService _networkService = NetworkService();
   late AnimationController _animationController;
   late Animation<double> _animation;
   int _currentWeek = 1;
@@ -59,12 +61,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       _initializeSchedule();
       _loadUserInfo();  // 加载用户信息
     });
+    _initializeNetworkMonitoring();
+  }
+
+  void _initializeNetworkMonitoring() {
+    _networkService.startConnectivityTimer((isConnected) {
+      if (mounted) {
+        setState(() {});
+        if (isConnected) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('网络已恢复，正在同步数据...')),
+          );
+          _loadWeekSchedule();
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
     _animationController.dispose();
     _courseCache.clear();
+    _networkService.dispose();
     super.dispose();
   }
 
@@ -513,71 +531,119 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ),
           ),
         ],
-      ),
-      body: GestureDetector(
-        onHorizontalDragStart: (details) {
-          _startDragX = details.localPosition.dx;
-          _isDragging = true;
-        },
-        onHorizontalDragUpdate: (details) {
-          if (!_isDragging) return;
-          final delta = details.localPosition.dx - _startDragX;
-          
-          // 当拖动超过屏幕宽度的20%时切换周次
-          if (delta.abs() > screenSize.width * 0.2) {
-            _isDragging = false;
-            if (delta > 0 && _currentWeek > 1) {
-              // 向右滑动，上一周
-              _changeWeek(_currentWeek - 1);
-            } else if (delta < 0 && _currentWeek < _totalWeeks) {
-              // 向左滑动，下一周
-              _changeWeek(_currentWeek + 1);
-            }
-          }
-        },
-        onHorizontalDragEnd: (details) {
-          _isDragging = false;
-        },
-        child: Stack(
-          children: [
-            FadeTransition(
-              opacity: _animation,
-              child: _buildTimeTableLayout(screenSize),
+        bottom: _networkService.isOfflineMode ? PreferredSize(
+          preferredSize: const Size.fromHeight(30),
+          child: Container(
+            width: double.infinity,
+            color: Theme.of(context).colorScheme.errorContainer,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              '离线模式',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+              textAlign: TextAlign.center,
             ),
-            if (_isLoadingBackground)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surface.withOpacity(0.8),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '同步中',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
+          ),
+        ) : null,
+      ),
+      body: Column(
+        children: [
+          if (_networkService.isOfflineMode)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Theme.of(context).colorScheme.error.withOpacity(0.8),
+                    Theme.of(context).colorScheme.errorContainer,
+                  ],
                 ),
               ),
-          ],
-        ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.wifi_off, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    '离线模式 - 使用本地缓存',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Expanded(
+            child: GestureDetector(
+              onHorizontalDragStart: (details) {
+                _startDragX = details.localPosition.dx;
+                _isDragging = true;
+              },
+              onHorizontalDragUpdate: (details) {
+                if (!_isDragging) return;
+                final delta = details.localPosition.dx - _startDragX;
+                
+                // 当拖动超过屏幕宽度的20%时切换周次
+                if (delta.abs() > screenSize.width * 0.2) {
+                  _isDragging = false;
+                  if (delta > 0 && _currentWeek > 1) {
+                    // 向右滑动，上一周
+                    _changeWeek(_currentWeek - 1);
+                  } else if (delta < 0 && _currentWeek < _totalWeeks) {
+                    // 向左滑动，下一周
+                    _changeWeek(_currentWeek + 1);
+                  }
+                }
+              },
+              onHorizontalDragEnd: (details) {
+                _isDragging = false;
+              },
+              child: Stack(
+                children: [
+                  FadeTransition(
+                    opacity: _animation,
+                    child: _buildTimeTableLayout(screenSize),
+                  ),
+                  if (_isLoadingBackground)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '同步中',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
