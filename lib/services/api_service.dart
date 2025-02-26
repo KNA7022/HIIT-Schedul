@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/rank_model.dart';  // 添加这行导入
 import 'storage_service.dart';
 import 'network_service.dart';
+import 'cache_service.dart';  // 添加这行
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
@@ -14,7 +15,9 @@ class ApiService {
   String _sessionId = '';
   String _token = '';
   final NetworkService _networkService = NetworkService();
-  
+  final CacheService _cacheService = CacheService();  // 添加这行
+  final StorageService _storageService = StorageService();  // 添加这行
+
   ApiService._internal() {
     _dio = Dio(BaseOptions(
       baseUrl: 'https://api.greathiit.com/api',
@@ -55,6 +58,19 @@ class ApiService {
       },
       onError: (error, handler) {
         print('Error: ${error.message}');
+        return handler.next(error);
+      },
+    ));
+
+    // 添加错误拦截器来处理网络错误
+    _dio.interceptors.add(InterceptorsWrapper(
+      onError: (error, handler) {
+        if (error.type == DioExceptionType.connectionTimeout ||
+            error.type == DioExceptionType.sendTimeout ||
+            error.type == DioExceptionType.receiveTimeout ||
+            error.type == DioExceptionType.connectionError) {
+          _networkService.setOfflineMode(true);
+        }
         return handler.next(error);
       },
     ));
@@ -114,49 +130,21 @@ class ApiService {
 
   Future<bool> initializeFromStorage() async {
     try {
-      final credentials = await StorageService().getCredentials();
+      final credentials = await _storageService.getCredentials();
       if (credentials['sessionId'] != null && credentials['token'] != null) {
         _sessionId = credentials['sessionId']!;
         _token = credentials['token']!;
         _updateHeaders();
         
-        // 检查网络连接
-        final isConnected = await _networkService.checkConnectivity();
-        if (!isConnected) {
-          print('网络不可用，启用离线模式');
-          _networkService.setOfflineMode(true);
-          return true; // 允许进入离线模式
-        }
-        
-        // 如果有网络，尝试验证凭证
-        try {
-          final response = await _dio.get(
-            '/pub/getCourseCalendar',
-            options: Options(
-              sendTimeout: const Duration(seconds: 5),
-              receiveTimeout: const Duration(seconds: 5),
-            ),
-          );
-          if (response.data['code'] == 200) {
-            _networkService.setOfflineMode(false);
-            return true;
-          }
-        } catch (e) {
-          print('验证凭证失败，启用离线模式: $e');
-          _networkService.setOfflineMode(true);
-          return true; // 允许进入离线模式
-        }
-        
-        // 如果有保存的账号密码，尝试重新登录
-        if (credentials['username'] != null && credentials['password'] != null) {
-          return login(credentials['username']!, credentials['password']!);
-        }
+        // 立即检查网络状态
+        await _networkService.checkConnectivity();
+        return true;
       }
       return false;
     } catch (e) {
       print('从存储初始化失败: $e');
       _networkService.setOfflineMode(true);
-      return true; // 允许进入离线模式
+      return false;
     }
   }
 
@@ -199,15 +187,24 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> _safeApiCall(Future<Response> Function() apiCall) async {
-    if (_networkService.isOfflineMode) {
-      return {'code': 200, 'message': '离线模式', 'data': null};
-    }
     try {
+      if (_networkService.isOfflineMode) {
+        // 在离线模式下返回一个有效的空数据结构
+        return {
+          'code': 200,
+          'message': '离线模式',
+          'data': [],  // 返回空数组而不是 null
+        };
+      }
       final response = await apiCall();
       return response.data as Map<String, dynamic>;
     } catch (e) {
       print('API 调用失败: $e');
-      return {'code': 500, 'message': e.toString(), 'data': null};
+      return {
+        'code': 500,
+        'message': e.toString(),
+        'data': [],  // 返回空数组而不是 null
+      };
     }
   }
 
@@ -219,7 +216,32 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getClassInfo(String timeAdd) async {
+    if (_networkService.isOfflineMode) {
+      // 尝试使用缓存数据
+      try {
+        final cachedData = await _cacheService.getCachedCourseDetail(timeAdd);
+        if (cachedData != null) {
+          return cachedData;
+        }
+      } catch (e) {
+        print('获取缓存课程详情失败: $e');
+      }
+      // 如果没有缓存，返回空数据结构
+      return {
+        'code': 200,
+        'message': '离线模式',
+        'data': {'ClassInfo': null}
+      };
+    }
     try {
+      if (_networkService.isOfflineMode) {
+        // 尝试使用缓存数据
+        return {
+          'code': 200,
+          'message': '离线模式',
+          'data': {'ClassInfo': null}
+        };
+      }
       print('获取课程详情: $timeAdd');
       final response = await _dio.get(
         '/sign/getCurrentClass',
@@ -236,6 +258,21 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getUserInfo() async {
+    if (_networkService.isOfflineMode) {
+      try {
+        final cachedUserInfo = await _cacheService.getCachedUserInfo();
+        if (cachedUserInfo != null) {
+          return {
+            'code': 200,
+            'message': '离线模式',
+            'data': cachedUserInfo,
+          };
+        }
+      } catch (e) {
+        print('获取缓存用户信息失败: $e');
+      }
+    }
+
     try {
       print('获取用户信息...');
       print('当前请求头: ${_dio.options.headers}');

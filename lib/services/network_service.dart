@@ -13,15 +13,19 @@ class NetworkService {
   Function(bool)? _onConnectivityChanged;
 
   NetworkService._internal() {
-    // 初始化时立即检查网络状态
-    checkConnectivity().then((isConnected) {
-      _isOfflineMode = !isConnected;
-    });
+    // 立即检查网络状态
+    checkConnectivity();
     
-    // 直接设置网络状态监听
-    _connectivitySubscription = _connectivity.onConnectivityChanged.listen(
-      (result) => _checkAndUpdateConnectivity(),
-    );
+    // 设置网络状态变化监听
+    _connectivity.onConnectivityChanged.listen((result) async {
+      if (result == ConnectivityResult.none) {
+        setOfflineMode(true);
+      } else {
+        // 当网络恢复时，进行实际的连接测试
+        final isConnected = await _testConnection();
+        setOfflineMode(!isConnected);
+      }
+    });
   }
 
   bool get isOfflineMode => _isOfflineMode;
@@ -30,18 +34,29 @@ class NetworkService {
     try {
       final connectivityResult = await _connectivity.checkConnectivity();
       if (connectivityResult == ConnectivityResult.none) {
+        setOfflineMode(true);
         return false;
       }
 
-      // 测试API连通性
-      final dio = Dio();
-      final response = await dio.get(
-        'https://api.greathiit.com/api/pub/getCourseCalendar',
-        options: Options(
-          sendTimeout: const Duration(seconds: 5),
-          receiveTimeout: const Duration(seconds: 5),
-        ),
-      );
+      // 测试API连接
+      final isConnected = await _testConnection();
+      setOfflineMode(!isConnected);
+      return isConnected;
+    } catch (e) {
+      print('网络状态检测失败: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _testConnection() async {
+    try {
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 3),
+        receiveTimeout: const Duration(seconds: 3),
+        sendTimeout: const Duration(seconds: 3),
+      ));
+      
+      final response = await dio.get('https://api.greathiit.com/api/pub/getCourseCalendar');
       return response.statusCode == 200;
     } catch (e) {
       print('连接测试失败: $e');
@@ -64,28 +79,39 @@ class NetworkService {
   }
 
   void setOfflineMode(bool value) {
-    _isOfflineMode = value;
-    if (value) {
-      print('切换到离线模式');
-    } else {
-      print('切换到在线模式');
-      // 切换到在线模式时立即检查连接状态
-      _checkAndUpdateConnectivity();
+    if (_isOfflineMode != value) {
+      _isOfflineMode = value;
+      print(value ? '切换到离线模式' : '切换到在线模式');
+      _onConnectivityChanged?.call(!value);
     }
-    // 触发回调通知状态变化
-    _onConnectivityChanged?.call(!value);
   }
 
   void startConnectivityMonitor(Function(bool) onConnectivityChanged) {
     _onConnectivityChanged = onConnectivityChanged;
     
-    // 取消现有定时器
+    // 取消现有监听器和定时器
+    _connectivitySubscription?.cancel();
     _connectivityTimer?.cancel();
     
+    // 设置网络状态变化监听
+    _connectivitySubscription = _connectivity.onConnectivityChanged.listen((result) async {
+      // 添加防抖，避免频繁切换
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      if (result == ConnectivityResult.none) {
+        setOfflineMode(true);
+      } else {
+        final isConnected = await _testConnection();
+        if (isConnected != !_isOfflineMode) {  // 只在状态真正需要改变时才设置
+          setOfflineMode(!isConnected);
+        }
+      }
+    });
+
     // 设置定期检查
     _connectivityTimer = Timer.periodic(
-      const Duration(minutes: 1),
-      (_) => _checkAndUpdateConnectivity(),
+      const Duration(seconds: 30),
+      (_) => checkConnectivity(),
     );
   }
 

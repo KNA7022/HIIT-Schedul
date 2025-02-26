@@ -17,7 +17,7 @@ class ScheduleScreen extends StatefulWidget {
   State<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
-class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProviderStateMixin {
+class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final ApiService _apiService = ApiService();
   final CacheService _cacheService = CacheService();
   final NetworkService _networkService = NetworkService();
@@ -56,12 +56,32 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     );
     // 设置动画初始值为1.0，这样内容一开始就是可见的
     _animationController.value = 1.0;
+
+    // 立即检查网络状态
+    _networkService.checkConnectivity();
     
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeSchedule();
       _loadUserInfo();  // 加载用户信息
     });
     _initializeNetworkMonitoring();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 当页面重新获得焦点时，同步网络状态
+    _syncNetworkState();
+  }
+
+  Future<void> _syncNetworkState() async {
+    final isConnected = await _networkService.checkConnectivity();
+    if (mounted && isConnected != !_networkService.isOfflineMode) {
+      setState(() {
+        // 强制刷新UI
+      });
+    }
   }
 
   void _initializeNetworkMonitoring() {
@@ -76,6 +96,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ),
           );
           _loadWeekSchedule();
+          _loadUserInfo();  // 同时刷新用户信息
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -89,53 +110,74 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncNetworkState();
+    }
+  }
+
+  @override
   void dispose() {
     _animationController.dispose();
     _courseCache.clear();
     _networkService.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   Future<void> _initializeSchedule() async {
     try {
-      final semesterInfo = await _apiService.getSemesterInfo();
-      print('学期信息: $semesterInfo');
-      
-      if (semesterInfo['code'] == 200 && semesterInfo['data'] != null) {
-        CourseInfo.setCurrentTerm(semesterInfo); // 设置当前学期信息
-        _semesterStartDate = DateTime.parse(semesterInfo['data']['calendarDay']);
-        final now = DateTime.now();
-        final difference = now.difference(_semesterStartDate!).inDays;
-        final calculatedWeek = max(1, min((difference / 7).ceil(), _totalWeeks));
-        setState(() {
-          _currentWeek = calculatedWeek;
-          _actualCurrentWeek = calculatedWeek;  // 保存实际当前周
-        });
-        _updateWeekDates(); // 更新日期
-        await _loadWeekSchedule();
-      } else {
-        print('获取学期信息失败：${semesterInfo['message']}');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('获取学期信息失败，请重新登录')),
-          );
-          Navigator.pushReplacementNamed(context, '/login');
+      // 先尝试从缓存初始化学期信息
+      final cachedSemesterInfo = await _cacheService.getCachedSemesterInfo();
+      if (cachedSemesterInfo != null) {
+        await _processSemesterInfo(cachedSemesterInfo);
+      }
+
+      // 如果不是离线模式，尝试获取最新学期信息
+      if (!_networkService.isOfflineMode) {
+        final semesterInfo = await _apiService.getSemesterInfo();
+        if (semesterInfo['code'] == 200 && semesterInfo['data'] != null) {
+          await _cacheService.cacheSemesterInfo(semesterInfo);
+          await _processSemesterInfo(semesterInfo);
         }
       }
     } catch (e) {
       print('初始化课表出错：$e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('初始化失败: $e')),
-        );
-        Navigator.pushReplacementNamed(context, '/login');
+      // 如果没有任何缓存数据且网络请求失败，才跳转登录
+      if (_semesterStartDate == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('初始化失败，请检查网络连接')),
+          );
+          Navigator.pushReplacementNamed(context, '/login');
+        }
       }
+    }
+  }
+
+  Future<void> _processSemesterInfo(Map<String, dynamic> semesterInfo) async {
+    if (semesterInfo['data'] != null) {
+      CourseInfo.setCurrentTerm(semesterInfo);
+      _semesterStartDate = DateTime.parse(semesterInfo['data']['calendarDay']);
+      final now = DateTime.now();
+      final difference = now.difference(_semesterStartDate!).inDays;
+      final calculatedWeek = max(1, min((difference / 7).ceil(), _totalWeeks));
+      
+      if (mounted) {
+        setState(() {
+          _currentWeek = calculatedWeek;
+          _actualCurrentWeek = calculatedWeek;
+        });
+      }
+      
+      _updateWeekDates();
+      await _loadWeekSchedule();
     }
   }
 
   Future<void> _loadUserInfo() async {
     try {
-      // 先尝试从缓存加载
+      // 优先使用缓存数据
       final cachedData = await _cacheService.getCachedUserInfo();
       if (cachedData != null) {
         setState(() {
@@ -143,21 +185,35 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         });
       }
 
-      // 从服务器获取最新数据
-      final response = await _apiService.getUserInfo();
-      if (response['code'] == 200 && response['data'] != null) {
-        await _cacheService.cacheUserInfo(response['data']);
-        setState(() {
-          _userInfo = UserInfo.fromJson(response['data']);
-        });
+      // 在线模式才获取新数据
+      if (!_networkService.isOfflineMode) {
+        final response = await _apiService.getUserInfo();
+        if (response['code'] == 200 && response['data'] != null) {
+          await _cacheService.cacheUserInfo(response['data']);
+          if (mounted) {
+            setState(() {
+              _userInfo = UserInfo.fromJson(response['data']);
+            });
+          }
+        }
       }
     } catch (e) {
       print('加载用户信息失败: $e');
+      // 错误时尝试使用缓存数据
+      final cachedData = await _cacheService.getCachedUserInfo();
+      if (cachedData != null && mounted) {
+        setState(() {
+          _userInfo = UserInfo.fromJson(cachedData);
+        });
+      }
     }
   }
 
   Future<void> _loadWeekSchedule() async {
     if (_isLoading) return;
+    
+    // 先同步一次网络状态
+    await _syncNetworkState();
     setState(() => _isLoading = true);
 
     try {
@@ -171,21 +227,29 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             _courseCache[_currentWeek] = processedData;
           });
         }
+        
+        // 如果是离线模式，直接返回，不尝试加载新数据
+        if (_networkService.isOfflineMode) {
+          setState(() => _isLoading = false);
+          return;
+        }
       }
 
-      // 2. 加载新数据
-      setState(() => _isLoadingBackground = true);
-      final newData = await _apiService.getWeekSchedule(_currentWeek);
-      
-      if (newData['code'] == 200) {
-        await _cacheService.cacheWeekSchedule(_currentWeek, newData);
-        final processedData = await _processCourseData(newData);
-        if (mounted) {
-          setState(() {
-            _weekCourses = processedData;
-            _courseCache[_currentWeek] = processedData;
-            _isLoadingBackground = false;
-          });
+      // 2. 在线模式下加载新数据
+      if (!_networkService.isOfflineMode) {
+        setState(() => _isLoadingBackground = true);
+        final newData = await _apiService.getWeekSchedule(_currentWeek);
+        
+        if (newData['code'] == 200) {
+          await _cacheService.cacheWeekSchedule(_currentWeek, newData);
+          final processedData = await _processCourseData(newData);
+          if (mounted) {
+            setState(() {
+              _weekCourses = processedData;
+              _courseCache[_currentWeek] = processedData;
+              _isLoadingBackground = false;
+            });
+          }
         }
       }
     } catch (e) {

@@ -11,6 +11,7 @@ class CacheService {
   static const String _prefixTermScores = 'term_scores_';
   static const String _keyTermList = 'term_list';
   static const String _keyRankList = 'rank_list';  // 添加排名缓存的键名
+  static const String _keySemesterInfo = 'semester_info';
 
   // 缓存周数据
   Future<void> cacheWeekSchedule(int week, Map<String, dynamic> data) async {
@@ -180,6 +181,35 @@ class CacheService {
     }
   }
 
+  Future<void> cacheSemesterInfo(Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+    final cacheData = {
+      'data': data,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+    await prefs.setString(_keySemesterInfo, jsonEncode(cacheData));
+  }
+
+  Future<Map<String, dynamic>?> getCachedSemesterInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString(_keySemesterInfo);
+    if (cached == null) return null;
+
+    try {
+      final cachedData = jsonDecode(cached) as Map<String, dynamic>;
+      final timestamp = DateTime.parse(cachedData['timestamp'] as String);
+      
+      if (DateTime.now().difference(timestamp) > _cacheValidity) {
+        await prefs.remove(_keySemesterInfo);
+        return null;
+      }
+      return cachedData['data'] as Map<String, dynamic>;
+    } catch (e) {
+      await prefs.remove(_keySemesterInfo);
+      return null;
+    }
+  }
+
   // 定期清理过期缓存
   Future<void> _performCacheCleanup() async {
     final prefs = await SharedPreferences.getInstance();
@@ -247,6 +277,7 @@ class CacheService {
         _keyUserInfo,
         _keyTermList,
         _keyRankList,
+        _keySemesterInfo,  // 添加学期信息缓存键
       ];
 
       // 按前缀清理
