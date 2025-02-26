@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'dart:convert';  // 添加此导入
+import 'dart:collection';  // 添加此导入
 import '../services/api_service.dart';
 import '../models/course_model.dart';
 import 'dart:math';
@@ -367,7 +368,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   bool _compareScheduleData(Map<String, dynamic>? old, Map<String, dynamic> new_) {
     if (old == null) return false;
-    return jsonEncode(old['data']) == jsonEncode(new_['data']);
+    
+    // 比较 week 字段
+    if (old['week'] != new_['week']) return false;
+    
+    // 只比较课程数据部分
+    final oldData = old['data'] as List?;
+    final newData = new_['data'] as List?;
+    
+    if (oldData == null || newData == null) return false;
+    if (oldData.length != newData.length) return false;
+
+    // 比较每个课程的 timeAdd，使用 Set.from() 创建集合
+    final oldTimeAdds = Set.from(oldData.map((c) => c['timeAdd']?.toString()));
+    final newTimeAdds = Set.from(newData.map((c) => c['timeAdd']?.toString()));
+    
+    return oldTimeAdds.containsAll(newTimeAdds) && newTimeAdds.containsAll(oldTimeAdds);
   }
 
   Future<void> _updateScheduleData(Map<String, dynamic> data, {bool animate = false}) async {
@@ -650,6 +666,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       _preloadedData.clear();
       _preloadAdjacentWeeks(newWeek);
 
+      // 6. 如果是在线模式，自动更新当前周数据
+      if (!_networkService.isOfflineMode) {
+        _updateCurrentWeekData();
+      }
+
     } catch (e) {
       print('切换周次失败: $e');
       if (mounted) {
@@ -698,6 +719,47 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         }
       } catch (e) {
         print('预加载第 $week 周数据失败: $e');
+      }
+    }
+  }
+
+  // 添加自动更新当前周数据的方法
+  Future<void> _updateCurrentWeekData() async {
+    if (_networkService.isOfflineMode) return;
+
+    setState(() {
+      _isSyncing = true;
+      _syncMessage = '正在同步数据...';
+    });
+
+    try {
+      final newData = await _apiService.getWeekSchedule(_currentWeek);
+      if (newData['code'] == 200) {
+        newData['week'] = _currentWeek;
+        
+        // 比较数据是否有变化
+        final cachedData = await _cacheService.getCachedWeekSchedule(_currentWeek);
+        if (!_compareScheduleData(cachedData, newData)) {
+          // 数据有变化，更新缓存和界面
+          await _cacheService.cacheWeekSchedule(_currentWeek, newData);
+          final processedData = await _processCourseData(newData);
+          
+          if (mounted) {
+            setState(() {
+              _weekCourses = processedData;
+              _courseCache[_currentWeek] = processedData;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      print('自动更新课表失败: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSyncing = false;
+          _syncMessage = '';
+        });
       }
     }
   }
@@ -782,8 +844,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           if (_isSyncing)
             Positioned(
               top: _networkService.isOfflineMode ? 40 : 0,
-              left: 0,
-              right: 0,
+              right: 0, // 改为右对齐
               child: _buildSyncIndicator(),
             ),
         ],
@@ -824,11 +885,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     return Material(
       color: Colors.transparent,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        margin: const EdgeInsets.only(top: 8, right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.9),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.1),
@@ -839,11 +900,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             SizedBox(
-              width: 16,
-              height: 16,
+              width: 12,
+              height: 12,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation<Color>(
@@ -851,11 +911,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             Text(
               _syncMessage,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onPrimaryContainer,
+                fontSize: 12,
                 fontWeight: FontWeight.w500,
               ),
             ),
