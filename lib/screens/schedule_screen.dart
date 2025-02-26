@@ -65,14 +65,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   void _initializeNetworkMonitoring() {
-    _networkService.startConnectivityTimer((isConnected) {
+    _networkService.startConnectivityMonitor((isConnected) {
       if (mounted) {
         setState(() {});
         if (isConnected) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('网络已恢复，正在同步数据...')),
+            const SnackBar(
+              content: Text('网络已恢复，正在同步数据...'),
+              duration: Duration(seconds: 2),
+            ),
           );
           _loadWeekSchedule();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('网络连接已断开，切换至离线模式'),
+              duration: Duration(seconds: 2),
+            ),
+          );
         }
       }
     });

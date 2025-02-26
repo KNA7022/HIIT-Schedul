@@ -125,25 +125,38 @@ class ApiService {
         if (!isConnected) {
           print('网络不可用，启用离线模式');
           _networkService.setOfflineMode(true);
-          return true; // 有缓存凭证时允许离线访问
+          return true; // 允许进入离线模式
         }
         
-        // 验证凭证
-        final response = await _dio.get('/pub/getCourseCalendar');
-        if (response.data['code'] == 200) {
-          _networkService.setOfflineMode(false);
-          return true;
+        // 如果有网络，尝试验证凭证
+        try {
+          final response = await _dio.get(
+            '/pub/getCourseCalendar',
+            options: Options(
+              sendTimeout: const Duration(seconds: 5),
+              receiveTimeout: const Duration(seconds: 5),
+            ),
+          );
+          if (response.data['code'] == 200) {
+            _networkService.setOfflineMode(false);
+            return true;
+          }
+        } catch (e) {
+          print('验证凭证失败，启用离线模式: $e');
+          _networkService.setOfflineMode(true);
+          return true; // 允许进入离线模式
         }
         
+        // 如果有保存的账号密码，尝试重新登录
         if (credentials['username'] != null && credentials['password'] != null) {
           return login(credentials['username']!, credentials['password']!);
         }
       }
       return false;
     } catch (e) {
-      print('Initialize from storage error: $e');
+      print('从存储初始化失败: $e');
       _networkService.setOfflineMode(true);
-      return true; // 有缓存凭证时允许离线访问
+      return true; // 允许进入离线模式
     }
   }
 
