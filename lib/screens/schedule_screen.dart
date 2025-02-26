@@ -35,6 +35,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   double _startDragX = 0;
   bool _isDragging = false;
 
+  // 添加当前实际周次属性
+  int _actualCurrentWeek = 1;
+
   @override
   void initState() {
     super.initState();
@@ -71,8 +74,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         _semesterStartDate = DateTime.parse(semesterInfo['data']['calendarDay']);
         final now = DateTime.now();
         final difference = now.difference(_semesterStartDate!).inDays;
+        final calculatedWeek = max(1, min((difference / 7).ceil(), _totalWeeks));
         setState(() {
-          _currentWeek = max(1, min((difference / 7).ceil(), _totalWeeks));
+          _currentWeek = calculatedWeek;
+          _actualCurrentWeek = calculatedWeek;  // 保存实际当前周
         });
         _updateWeekDates(); // 更新日期
         await _loadWeekSchedule();
@@ -330,18 +335,37 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
-    
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.primaryContainer,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '第$_currentWeek周课表',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onPrimaryContainer,
-              ),
+            Row(
+              children: [
+                Text(
+                  '第$_currentWeek周课表',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                if (_currentWeek != _actualCurrentWeek) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '非本周',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
             Text(
               _userInfo != null 
