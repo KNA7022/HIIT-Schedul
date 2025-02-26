@@ -211,26 +211,31 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   Future<void> _loadWeekSchedule() async {
     if (_isLoading) return;
-    
-    // 先同步一次网络状态
-    await _syncNetworkState();
     setState(() => _isLoading = true);
 
     try {
-      // 1. 先尝试加载缓存
+      // 1. 加载缓存
       final cachedData = await _cacheService.getCachedWeekSchedule(_currentWeek);
+      bool hasCachedData = false;
+      
       if (cachedData != null) {
-        final processedData = await _processCourseData(cachedData);
-        if (mounted) {
-          setState(() {
-            _weekCourses = processedData;
-            _courseCache[_currentWeek] = processedData;
-          });
+        // 验证缓存数据是否属于当前周
+        if (cachedData['week'] == _currentWeek) {
+          final processedData = await _processCourseData(cachedData);
+          if (mounted) {
+            setState(() {
+              _weekCourses = processedData;
+              _courseCache[_currentWeek] = processedData;
+            });
+          }
+          hasCachedData = true;
         }
-        
-        // 如果是离线模式，直接返回，不尝试加载新数据
-        if (_networkService.isOfflineMode) {
-          setState(() => _isLoading = false);
+
+        // 如果是离线模式且没有当前周的缓存，显示空课表
+        if (_networkService.isOfflineMode && !hasCachedData) {
+          setState(() {
+            _weekCourses = List.generate(7, (_) => List.filled(5, null));
+          });
           return;
         }
       }
@@ -241,7 +246,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         final newData = await _apiService.getWeekSchedule(_currentWeek);
         
         if (newData['code'] == 200) {
+          // 添加周次信息到缓存数据中
+          newData['week'] = _currentWeek;
           await _cacheService.cacheWeekSchedule(_currentWeek, newData);
+          
           final processedData = await _processCourseData(newData);
           if (mounted) {
             setState(() {
@@ -504,18 +512,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     setState(() {
       _currentWeek = newWeek;
       _updateWeekDates();
-      
-      // 如果缓存中有数据，立即显示
-      if (_courseCache.containsKey(newWeek)) {
-        _weekCourses = _courseCache[newWeek]!;
-      }
+      // 移除立即显示缓存数据的逻辑
+      _weekCourses = List.generate(7, (_) => List.filled(5, null));
     });
 
-    // 异步加载数据，不阻塞UI
+    // 立即加载新周次的数据
     _loadWeekSchedule();
-    
-    // 预加载相邻周的数据
-    _preloadAdjacentWeeks(newWeek);
   }
 
   // 添加预加载方法
