@@ -38,6 +38,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   // 添加当前实际周次属性
   int _actualCurrentWeek = 1;
 
+  // 添加预加载缓存
+  Map<int, List<List<CourseInfo?>>> _courseCache = {};
+
   @override
   void initState() {
     super.initState();
@@ -61,6 +64,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   @override
   void dispose() {
     _animationController.dispose();
+    _courseCache.clear();
     super.dispose();
   }
 
@@ -132,26 +136,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       // 1. 先尝试加载缓存
       final cachedData = await _cacheService.getCachedWeekSchedule(_currentWeek);
       if (cachedData != null) {
-        print('使用缓存数据: $cachedData');
-        await _updateScheduleData(cachedData, animate: true);
+        final processedData = await _processCourseData(cachedData);
+        if (mounted) {
+          setState(() {
+            _weekCourses = processedData;
+            _courseCache[_currentWeek] = processedData;
+          });
+        }
       }
 
       // 2. 加载新数据
       setState(() => _isLoadingBackground = true);
       final newData = await _apiService.getWeekSchedule(_currentWeek);
-      print('获取到新数据: $newData');
-      setState(() => _isLoadingBackground = false);
-
-      // 3. 如果获取成功则更新
+      
       if (newData['code'] == 200) {
         await _cacheService.cacheWeekSchedule(_currentWeek, newData);
-        await _updateScheduleData(newData, animate: false);
-      } else {
-        print('获取课表失败: ${newData['message']}');
-        if (cachedData == null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('获取课表失败: ${newData['message']}')),
-          );
+        final processedData = await _processCourseData(newData);
+        if (mounted) {
+          setState(() {
+            _weekCourses = processedData;
+            _courseCache[_currentWeek] = processedData;
+            _isLoadingBackground = false;
+          });
         }
       }
     } catch (e) {
@@ -162,7 +168,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingBackground = false;
+        });
+      }
     }
   }
 
@@ -192,8 +203,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   Future<void> _processScheduleData(Map<String, dynamic> schedule) async {
     print('处理课表数据: $schedule');
     
-    // 清空现有数据
-    _weekCourses = List.generate(7, (_) => List.filled(5, null));
+    // 修改列表初始化方式，使用 CourseInfo? 类型
+    final newWeekCourses = List<List<CourseInfo?>>.generate(
+      7,
+      (_) => List<CourseInfo?>.filled(5, null)
+    );
     
     if (!schedule.containsKey('data') || schedule['data'] == null) {
       print('课表数据为空');
@@ -203,29 +217,40 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     final List<dynamic> courses = schedule['data'];
     print('课程总数: ${courses.length}');
 
+    // 批量获取所有课程的 timeAdd
+    final List<String> timeAdds = courses
+        .where((course) => course['timeAdd'] != null)
+        .map<String>((course) => course['timeAdd'] as String)
+        .toList();
+
+    // 批量获取所有课程详情
+    final Map<String, Map<String, dynamic>> courseDetails = {};
+    await Future.wait(
+      timeAdds.map((timeAdd) async {
+        // 先尝试从缓存获取
+        final cached = await _cacheService.getCachedCourseDetail(timeAdd);
+        if (cached != null) {
+          courseDetails[timeAdd] = cached;
+          return;
+        }
+
+        // 如果缓存没有，从服务器获取
+        final response = await _apiService.getClassInfo(timeAdd);
+        if (response['code'] == 200) {
+          courseDetails[timeAdd] = response;
+          await _cacheService.cacheCourseDetail(timeAdd, response);
+        }
+      }),
+    );
+
+    // 处理所有课程
     for (var courseData in courses) {
       try {
-        if (!courseData.containsKey('timeAdd')) {
-          print('课程数据缺少timeAdd字段: $courseData');
-          continue;
-        }
-
         final String timeAdd = courseData['timeAdd'];
-        print('处理课程: $timeAdd');
-
-        // 尝试获取课程详情
-        Map<String, dynamic>? classInfo = await _cacheService.getCachedCourseDetail(timeAdd);
+        final classInfo = courseDetails[timeAdd];
         
-        if (classInfo == null) {
-          classInfo = await _apiService.getClassInfo(timeAdd);
-          if (classInfo['code'] == 200) {
-            await _cacheService.cacheCourseDetail(timeAdd, classInfo);
-          }
-        }
-
-        print('课程详情: $classInfo');
-
-        if (classInfo['code'] == 200 && 
+        if (classInfo != null && 
+            classInfo['code'] == 200 && 
             classInfo['data'] != null && 
             classInfo['data']['ClassInfo'] != null) {
           final courseInfo = classInfo['data']['ClassInfo'];
@@ -233,12 +258,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           final timeIndex = _getTimeIndex(course.jie);
           final dayIndex = _getDayIndex(course.xq);
           
-          print('添加课程: ${course.courseName} 到位置[$dayIndex, $timeIndex]');
-
-          if (timeIndex != -1 && dayIndex != -1 && mounted) {
-            setState(() {
-              _weekCourses[dayIndex][timeIndex] = course;
-            });
+          if (timeIndex != -1 && dayIndex != -1) {
+            newWeekCourses[dayIndex][timeIndex] = course;  // 现在这里不会报错
           }
         }
       } catch (e) {
@@ -246,14 +267,77 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       }
     }
 
-    // 打印最终课表状态
-    for (int i = 0; i < _weekCourses.length; i++) {
-      for (int j = 0; j < _weekCourses[i].length; j++) {
-        if (_weekCourses[i][j] != null) {
-          print('位置[$i, $j]: ${_weekCourses[i][j]!.courseName}');
+    // 一次性更新UI
+    if (mounted) {
+      setState(() {
+        _weekCourses = newWeekCourses;
+      });
+    }
+  }
+
+  Future<List<List<CourseInfo?>>> _processCourseData(Map<String, dynamic> data) async {
+    final newWeekCourses = List<List<CourseInfo?>>.generate(
+      7,
+      (_) => List<CourseInfo?>.filled(5, null)
+    );
+
+    if (!data.containsKey('data') || data['data'] == null) return newWeekCourses;
+
+    // 处理所有课程
+    final List<dynamic> courses = data['data'];
+    print('课程总数: ${courses.length}');
+
+    // 批量获取所有课程的 timeAdd
+    final List<String> timeAdds = courses
+        .where((course) => course['timeAdd'] != null)
+        .map<String>((course) => course['timeAdd'] as String)
+        .toList();
+
+    // 批量获取所有课程详情
+    final Map<String, Map<String, dynamic>> courseDetails = {};
+    await Future.wait(
+      timeAdds.map((timeAdd) async {
+        // 先尝试从缓存获取
+        final cached = await _cacheService.getCachedCourseDetail(timeAdd);
+        if (cached != null) {
+          courseDetails[timeAdd] = cached;
+          return;
         }
+
+        // 如果缓存没有，从服务器获取
+        final response = await _apiService.getClassInfo(timeAdd);
+        if (response['code'] == 200) {
+          courseDetails[timeAdd] = response;
+          await _cacheService.cacheCourseDetail(timeAdd, response);
+        }
+      }),
+    );
+
+    // 处理所有课程
+    for (var courseData in courses) {
+      try {
+        final String timeAdd = courseData['timeAdd'];
+        final classInfo = courseDetails[timeAdd];
+        
+        if (classInfo != null && 
+            classInfo['code'] == 200 && 
+            classInfo['data'] != null && 
+            classInfo['data']['ClassInfo'] != null) {
+          final courseInfo = classInfo['data']['ClassInfo'];
+          final course = CourseInfo.fromJson(courseInfo);
+          final timeIndex = _getTimeIndex(course.jie);
+          final dayIndex = _getDayIndex(course.xq);
+          
+          if (timeIndex != -1 && dayIndex != -1) {
+            newWeekCourses[dayIndex][timeIndex] = course;  // 现在这里不会报错
+          }
+        }
+      } catch (e) {
+        print('处理单个课程失败: $e');
       }
     }
+
+    return newWeekCourses;
   }
 
   int _getTimeIndex(String jie) {
@@ -327,9 +411,41 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
     setState(() {
       _currentWeek = newWeek;
+      _updateWeekDates();
+      
+      // 如果缓存中有数据，立即显示
+      if (_courseCache.containsKey(newWeek)) {
+        _weekCourses = _courseCache[newWeek]!;
+      }
     });
-    _updateWeekDates();
+
+    // 异步加载数据，不阻塞UI
     _loadWeekSchedule();
+    
+    // 预加载相邻周的数据
+    _preloadAdjacentWeeks(newWeek);
+  }
+
+  // 添加预加载方法
+  Future<void> _preloadAdjacentWeeks(int currentWeek) async {
+    final List<int> weeksToPreload = [
+      if (currentWeek > 1) currentWeek - 1,
+      if (currentWeek < _totalWeeks) currentWeek + 1,
+    ];
+
+    for (final week in weeksToPreload) {
+      if (!_courseCache.containsKey(week)) {
+        try {
+          final cachedData = await _cacheService.getCachedWeekSchedule(week);
+          if (cachedData != null) {
+            final processedData = await _processCourseData(cachedData);
+            _courseCache[week] = processedData;
+          }
+        } catch (e) {
+          print('预加载第 $week 周数据失败: $e');
+        }
+      }
+    }
   }
 
   @override
