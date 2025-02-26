@@ -53,6 +53,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   // 添加预加载数据缓存
   Map<int, List<List<CourseInfo?>>> _preloadedData = {};
 
+  // 添加同步状态
+  bool _isSyncing = false;
+  String _syncMessage = '';
+
   @override
   void initState() {
     super.initState();
@@ -123,8 +127,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               duration: Duration(seconds: 2),
             ),
           );
-          _loadWeekSchedule();
-          _loadUserInfo();  // 同时刷新用户信息
+          _syncDataAfterNetworkRecovery();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -135,6 +138,54 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         }
       }
     });
+  }
+
+  // 添加网络恢复后的数据同步方法
+  Future<void> _syncDataAfterNetworkRecovery() async {
+    if (_isSyncing) return;
+    
+    setState(() {
+      _isSyncing = true;
+      _syncMessage = '正在同步数据...';
+    });
+
+    try {
+      // 1. 同步用户信息
+      await _loadUserInfo();
+
+      // 2. 同步当前周数据
+      final response = await _apiService.getWeekSchedule(_currentWeek);
+      if (response['code'] == 200) {
+        response['week'] = _currentWeek;
+        await _cacheService.cacheWeekSchedule(_currentWeek, response);
+        final processedData = await _processCourseData(response);
+        if (mounted) {
+          setState(() {
+            _weekCourses = processedData;
+            _courseCache[_currentWeek] = processedData;
+          });
+        }
+      }
+
+      // 3. 清理并重新预加载相邻周
+      _preloadedData.clear();
+      await _preloadAdjacentWeeks(_currentWeek);
+
+    } catch (e) {
+      print('网络恢复后同步数据失败: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('同步失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSyncing = false;
+          _syncMessage = '';
+        });
+      }
+    }
   }
 
   @override
@@ -240,7 +291,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   Future<void> _loadWeekSchedule() async {
     if (_isLoading) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      if (!_networkService.isOfflineMode) {
+        _isSyncing = true;
+        _syncMessage = '正在更新课表...';
+      }
+    });
 
     try {
       // 1. 加载缓存
@@ -300,6 +357,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _isSyncing = false;
+          _syncMessage = '';
           _isLoadingBackground = false;
         });
       }
@@ -709,98 +768,162 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          if (_networkService.isOfflineMode)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Theme.of(context).colorScheme.error.withOpacity(0.8),
-                    Theme.of(context).colorScheme.errorContainer,
-                  ],
-                ),
+          Column(
+            children: [
+              if (_networkService.isOfflineMode)
+                _buildOfflineBanner(),
+              Expanded(
+                child: _buildMainContent(),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.wifi_off, size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                    '离线模式 - 使用本地缓存',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onErrorContainer,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
+            ],
+          ),
+          if (_isSyncing)
+            Positioned(
+              top: _networkService.isOfflineMode ? 40 : 0,
+              left: 0,
+              right: 0,
+              child: _buildSyncIndicator(),
             ),
-          Expanded(
-            child: GestureDetector(
-              onHorizontalDragStart: (details) {
-                if (!_isAnimating) {
-                  _startDragX = details.localPosition.dx;
-                  _isDragging = true;
-                }
-              },
-              onHorizontalDragUpdate: (details) {
-                if (!_isDragging || _isAnimating) return;
-                final delta = details.localPosition.dx - _startDragX;
-                
-                if (delta.abs() > MediaQuery.of(context).size.width * 0.2) {
-                  _isDragging = false;
-                  if (delta > 0 && _currentWeek > 1) {
-                    _changeWeek(_currentWeek - 1);
-                  } else if (delta < 0 && _currentWeek < _totalWeeks) {
-                    _changeWeek(_currentWeek + 1);
-                  }
-                }
-              },
-              onHorizontalDragEnd: (details) => _isDragging = false,
-              child: PageView.builder(
-                controller: _pageController,
-                physics: _isAnimating 
-                    ? const NeverScrollableScrollPhysics() 
-                    : const BouncingScrollPhysics(),
-                onPageChanged: (index) {
-                  if (!_isAnimating) {
-                    _changeWeek(index + 1);
-                  }
-                },
-                itemCount: _totalWeeks,
-                itemBuilder: (context, index) {
-                  // 优化动画计算
-                  final double position = (index - _currentPageValue).clamp(-1.0, 1.0);
-                  final double opacity = (1 - position.abs()).clamp(0.3, 1.0);
-                  
-                  return RepaintBoundary(
-                    child: AnimatedBuilder(
-                      animation: _pageController,
-                      builder: (context, child) {
-                        return Transform(
-                          transform: Matrix4.identity()
-                            ..setEntry(3, 2, 0.001)
-                            ..rotateY(position * 0.2), // 减小旋转角度
-                          alignment: position <= 0 
-                              ? Alignment.centerRight 
-                              : Alignment.centerLeft,
-                          child: Opacity(
-                            opacity: opacity,
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: _buildTimeTableLayout(MediaQuery.of(context).size),
-                    ),
-                  );
-                },
-              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOfflineBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).colorScheme.error.withOpacity(0.8),
+            Theme.of(context).colorScheme.errorContainer,
+          ],
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.wifi_off, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            '离线模式 - 使用本地缓存',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).colorScheme.onErrorContainer,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSyncIndicator() {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.9),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _syncMessage,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainContent() {
+    return GestureDetector(
+      onHorizontalDragStart: (details) {
+        if (!_isAnimating) {
+          _startDragX = details.localPosition.dx;
+          _isDragging = true;
+        }
+      },
+      onHorizontalDragUpdate: (details) {
+        if (!_isDragging || _isAnimating) return;
+        final delta = details.localPosition.dx - _startDragX;
+        
+        if (delta.abs() > MediaQuery.of(context).size.width * 0.2) {
+          _isDragging = false;
+          if (delta > 0 && _currentWeek > 1) {
+            _changeWeek(_currentWeek - 1);
+          } else if (delta < 0 && _currentWeek < _totalWeeks) {
+            _changeWeek(_currentWeek + 1);
+          }
+        }
+      },
+      onHorizontalDragEnd: (details) => _isDragging = false,
+      child: PageView.builder(
+        controller: _pageController,
+        physics: _isAnimating 
+            ? const NeverScrollableScrollPhysics() 
+            : const BouncingScrollPhysics(),
+        onPageChanged: (index) {
+          if (!_isAnimating) {
+            _changeWeek(index + 1);
+          }
+        },
+        itemCount: _totalWeeks,
+        itemBuilder: (context, index) {
+          // 优化动画计算
+          final double position = (index - _currentPageValue).clamp(-1.0, 1.0);
+          final double opacity = (1 - position.abs()).clamp(0.3, 1.0);
+          
+          return RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: _pageController,
+              builder: (context, child) {
+                return Transform(
+                  transform: Matrix4.identity()
+                    ..setEntry(3, 2, 0.001)
+                    ..rotateY(position * 0.2), // 减小旋转角度
+                  alignment: position <= 0 
+                      ? Alignment.centerRight 
+                      : Alignment.centerLeft,
+                  child: Opacity(
+                    opacity: opacity,
+                    child: child,
+                  ),
+                );
+              },
+              child: _buildTimeTableLayout(MediaQuery.of(context).size),
+            ),
+          );
+        },
       ),
     );
   }
