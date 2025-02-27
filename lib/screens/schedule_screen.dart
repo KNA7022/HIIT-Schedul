@@ -627,6 +627,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     
     try {
       // 1. 立即更新UI到目标周
+      
       _currentWeek = newWeek;
       _updateWeekDates();
 
@@ -651,13 +652,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         }
         
         // 如果没有缓存数据且在线，从服务器获取
-        if (nextWeekData == null && !_networkService.isOfflineMode) {
-          final newData = await _apiService.getWeekSchedule(newWeek);
-          if (newData['code'] == 200) {
-            newData['week'] = newWeek;
-            await _cacheService.cacheWeekSchedule(newWeek, newData);
-            nextWeekData = await _processCourseData(newData);
-          }
+        if (!_networkService.isOfflineMode) {
+            _updateCurrentWeekData();
+        }
+      }
+      else{
+          if (!_networkService.isOfflineMode) {
+            _updateCurrentWeekData();
         }
       }
 
@@ -730,6 +731,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   // 添加自动更新当前周数据的方法
   Future<void> _updateCurrentWeekData() async {
+
+
+
     if (_networkService.isOfflineMode) return;
 
     setState(() {
