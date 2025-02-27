@@ -651,7 +651,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           nextWeekData = await _processCourseData(cachedData);
         }
         
-        // 如果没有缓存数据且在线，从服务器获取
+        // 如果在线，从服务器获取
         if (!_networkService.isOfflineMode) {
             _updateCurrentWeekData();
         }
