@@ -553,7 +553,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   int _getTimeIndex(String jie) {
-    print('Converting jie: $jie');
     final normalizedJie = jie.replaceAll('节', '').trim();
     final numbers = normalizedJie.split('-');
     if (numbers.isEmpty) return -1;
@@ -572,7 +571,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   int _getDayIndex(String xq) {
-    print('Converting xq: $xq');
     switch (xq.trim()) {
       case '周一': return 0;
       case '周二': return 1;
@@ -582,7 +580,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       case '周六': return 5;
       case '周日': return 6;
       default: 
-        print('Unknown day: $xq');
         return -1;
     }
   }
@@ -619,58 +616,81 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   // 在周次改变时更新日期
   Future<void> _changeWeek(int newWeek) async {
-    if (newWeek == _currentWeek || _isAnimating) return;
+    if (newWeek == _currentWeek || _isAnimating) {
+      print('跳过切换：当前周 $_currentWeek，目标周 $newWeek，动画状态 $_isAnimating');
+      return;
+    }
     
+    print('开始切换周次：$_currentWeek -> $newWeek');
     _isAnimating = true;
-    _isLoadingWeekNotifier.value = true;  // 开始加载
     final previousWeek = _currentWeek;
     
     try {
-      // 1. 立即更新UI到目标周
+      // 1. 检查是否有预加载或缓存数据
+      bool hasPreloadedData = _preloadedData.containsKey(newWeek);
+      bool hasCachedData = false;
+      if (!hasPreloadedData) {
+        final cachedData = await _cacheService.getCachedWeekSchedule(newWeek);
+        hasCachedData = cachedData != null && cachedData['week'] == newWeek;
+      }
       
+      // 只在没有任何数据时才显示加载动画
+      if (!hasPreloadedData && !hasCachedData) {
+        _isLoadingWeekNotifier.value = true;
+      }
+
+      // 2. 更新状态
       _currentWeek = newWeek;
       _updateWeekDates();
+      print('状态已更新到第 $newWeek 周');
 
-      // 2. 先尝试执行页面切换动画
-      _pageController.animateToPage(
-        newWeek - 1,
-        duration: _animationDuration,
-        curve: _animationCurve,
-      );
+      // 3. 执行页面切换动画
+      if (_pageController.hasClients) {
+        print('开始页面切换动画');
+        await _pageController.animateToPage(
+          newWeek - 1,
+          duration: _animationDuration,
+          curve: _animationCurve,
+        );
+        print('页面切换动画完成');
+      }
 
-      // 3. 异步加载数据
+      // 4. 加载课表数据
+      print('开始加载第 $newWeek 周数据');
       List<List<CourseInfo?>>? nextWeekData = _preloadedData[newWeek];
       
       if (nextWeekData == null) {
-        // 先显示空课表
+        print('没有预加载数据，尝试加载缓存');
         _weekCourses = List.generate(7, (_) => List.filled(5, null));
         
-        // 尝试从缓存加载
         final cachedData = await _cacheService.getCachedWeekSchedule(newWeek);
         if (cachedData != null && cachedData['week'] == newWeek) {
+          print('使用缓存数据');
           nextWeekData = await _processCourseData(cachedData);
         }
         
-        // 如果在线，从服务器获取
         if (!_networkService.isOfflineMode) {
-            _updateCurrentWeekData();
+          print('在线模式，获取最新数据');
+          await _updateCurrentWeekData();
         }
-      }
-      else{
-          if (!_networkService.isOfflineMode) {
-            _updateCurrentWeekData();
+      } else {
+        print('使用预加载数据');
+        if (!_networkService.isOfflineMode) {
+          print('同步在线数据');
+          await _updateCurrentWeekData();
         }
       }
 
-      // 4. 应用新数据
       if (mounted && nextWeekData != null) {
         _weekCourses = nextWeekData;
         _courseCache[newWeek] = nextWeekData;
+        print('数据已更新到界面');
       }
 
       // 5. 预加载相邻周
       _preloadedData.clear();
-      _preloadAdjacentWeeks(newWeek);
+      await _preloadAdjacentWeeks(newWeek);
+      print('预加载完成');
 
     } catch (e) {
       print('切换周次失败: $e');
@@ -685,7 +705,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       if (mounted) {
         _isAnimating = false;
         _isLoadingWeekNotifier.value = false;
-        _updateWeekDates();
+        print('切换周次完成：当前周 $_currentWeek');
       }
     }
   }
@@ -1257,6 +1277,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     );
   }
 
+  Future<void> _executeWeekChange(int week) async {
+    print('开始切换到第 $week 周');
+    // 先关闭弹窗
+    if (mounted && Navigator.canPop(context)) {
+      Navigator.of(context).pop();
+    }
+    
+    print('弹窗已关闭，等待切换');
+    // 等待弹窗动画完成
+    await Future.delayed(const Duration(milliseconds: 300));
+    
+    if (mounted) {
+      print('执行周次切换 $_currentWeek -> $week');
+      await _changeWeek(week);
+      print('完成切换到第 $week 周');
+    }
+  }
+
   void _showWeekPicker() {
     showModalBottomSheet(
       context: context,
@@ -1266,34 +1304,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: _currentWeek > 1 ? () {
-                    setState(() => _currentWeek--);
-                    _loadWeekSchedule();
-                    Navigator.pop(context);
-                  } : null,
-                ),
-                Text(
-                  '选择周次',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.arrow_forward),
-                  onPressed: _currentWeek < _totalWeeks ? () {
-                    setState(() => _currentWeek++);
-                    _loadWeekSchedule();
-                    Navigator.pop(context);
-                  } : null,
-                ),
-              ],
+            Text(
+              '选择周次',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontWeight: FontWeight.bold,
+              ),
             ),
+            const SizedBox(height: 16),
             SizedBox(
               height: 200,
               child: GridView.builder(
@@ -1320,24 +1338,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                             ? Theme.of(context).colorScheme.primary
                             : Theme.of(context).colorScheme.outline,
                       ),
-                      padding: EdgeInsets.zero, // 移除内边距
-                    ),
-                    child: Container(
-                      width: double.infinity,
-                      height: double.infinity,
-                      alignment: Alignment.center,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          '$week',
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                      ),
                     ),
                     onPressed: () {
-                      _changeWeek(week);
-                      Navigator.pop(context);
+                      print('选择器点击：第 $week 周');
+                      _executeWeekChange(week);
                     },
+                    child: Text('$week', style: const TextStyle(fontSize: 16)),
                   );
                 },
               ),
